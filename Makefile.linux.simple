@@ -1,0 +1,26 @@
+# SimCity Linux - Simple Make Build
+# Uso: make -f Makefile.linux.simple all
+
+.PHONY: all clean dist steam-deck
+
+all: build/frontend/linux/simcity-linux
+
+build/frontend/linux/simcity-linux:
+	@echo "Building SimCity Linux frontend..."
+	@mkdir -p build/frontend/linux
+	cd build && cmake .. -DBUILD_LINUX_FRONTEND=ON && make simcity-linux -j$(nproc)
+	@echo "Build complete: build/frontend/linux/simcity-linux"
+
+dist: all
+	@mkdir -p dist/linux
+	cp build/frontend/linux/simcity-linux dist/linux/
+	@chmod +x dist/linux/simcity-linux
+	@echo "Dist ready: dist/linux/simcity-linux"
+
+steam-deck: dist
+	@echo "Deploying to Steam Deck..."
+	@scp dist/linux/simcity-linux deck@steamdeck:~/simcity-build/simcity-linux
+	@echo "Deployed to Steam Deck"
+
+clean:
+	@rm -rf build/frontend/linux dist/linux
