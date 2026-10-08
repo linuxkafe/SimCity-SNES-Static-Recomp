@@ -11,8 +11,18 @@ target_include_directories(simcity-linux PRIVATE
 )
 
 # Link SDL2 or SDL3 depending on what's available
-# Parent CMakeLists.txt sets SDL2_FOUND or SDL3_FOUND
+# Check parent CMakeLists.txt variables
 if(SDL3_FOUND)
+    target_link_libraries(simcity-linux PRIVATE
+        simcity-static-recomp
+        SDL3::SDL3
+    )
+    target_compile_definitions(simcity-linux PRIVATE
+        SIMCITY_PLATFORM_LINUX
+        SIMCITY_USE_SDL3
+    )
+    message(STATUS "Using SDL3 with Vulkan support")
+elseif(TARGET SDL3::SDL3)
     target_link_libraries(simcity-linux PRIVATE
         simcity-static-recomp
         SDL3::SDL3
@@ -33,8 +43,50 @@ elseif(SDL2_FOUND)
         SIMCITY_PLATFORM_LINUX
     )
     message(STATUS "Using SDL2")
+elseif(TARGET SDL2::SDL2)
+    target_link_libraries(simcity-linux PRIVATE
+        simcity-static-recomp
+        SDL2::SDL2
+    )
+    target_compile_definitions(simcity-linux PRIVATE
+        SIMCITY_PLATFORM_LINUX
+    )
+    message(STATUS "Using SDL2")
 else()
-    message(FATAL_ERROR "Neither SDL2 nor SDL3 found")
+    # Fallback: try to find SDL3 or SDL2 directly (works on Steam Deck without pkg-config)
+    find_library(SDL3_LIB SDL3 PATHS /usr/lib /usr/lib64 /usr/local/lib)
+    if(SDL3_LIB)
+        target_link_libraries(simcity-linux PRIVATE
+            simcity-static-recomp
+            ${SDL3_LIB}
+        )
+        target_compile_definitions(simcity-linux PRIVATE
+            SIMCITY_PLATFORM_LINUX
+            SIMCITY_USE_SDL3
+        )
+        message(STATUS "Using SDL3 (direct link) - Vulkan support available")
+    else()
+        find_library(SDL2_LIB SDL2 PATHS /usr/lib /usr/lib64 /usr/local/lib)
+        if(SDL2_LIB)
+            target_link_libraries(simcity-linux PRIVATE
+                simcity-static-recomp
+                ${SDL2_LIB}
+            )
+            target_compile_definitions(simcity-linux PRIVATE
+                SIMCITY_PLATFORM_LINUX
+            )
+            message(STATUS "Using SDL2 (direct link)")
+        else()
+            message(FATAL_ERROR "Neither SDL2 nor SDL3 found")
+        endif()
+    endif()
+endif()
+
+# Add SDL3 include directories for fetched SDL3
+if(TARGET SDL3::SDL3-static)
+    target_include_directories(simcity-linux PRIVATE
+        ${SDL3_SOURCE_DIR}/include
+    )
 endif()
 
 target_compile_options(simcity-linux PRIVATE
