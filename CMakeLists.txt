@@ -49,14 +49,45 @@ endif()
 if(WIN32)
     add_subdirectory(frontend/windows)
 elseif(UNIX AND NOT APPLE)
-    # Linux frontend using SDL2
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(SDL2 REQUIRED sdl2)
-    if(SDL2_FOUND)
-        add_subdirectory(frontend/linux)
-        message(STATUS "Linux frontend enabled (SDL2)")
+    # Linux frontend: prefer system SDL2, fall back to fetched SDL3.
+    set(BUILD_LINUX_FRONTEND ON CACHE BOOL "Build the Linux SDL2/SDL3 frontend")
+    if(BUILD_LINUX_FRONTEND)
+        find_package(PkgConfig QUIET)
+        pkg_check_modules(SDL2 QUIET sdl2)
+        if(SDL2_FOUND)
+            message(STATUS "Linux frontend: using system SDL2 ${SDL2_VERSION}")
+            add_subdirectory(frontend/linux)
+        else()
+            # SDL3 may be installed without pkg-config (e.g. Steam Deck).
+            # Try config mode first, then fetch from source.
+            find_package(SDL3 QUIET CONFIG)
+            if(TARGET SDL3::SDL3)
+                message(STATUS "Linux frontend: using system SDL3 (config)")
+                set(SDL3_FOUND TRUE)
+                add_subdirectory(frontend/linux)
+            else()
+                message(STATUS
+                    "SDL2/SDL3 not found via pkg-config/config; fetching SDL3 from source")
+                include(FetchContent)
+                set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+                set(SDL_STATIC ON CACHE BOOL "" FORCE)
+                set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+                set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+                set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+                set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+                FetchContent_Declare(
+                    SDL3
+                    URL "https://github.com/libsdl-org/SDL/releases/download/release-3.2.18/SDL3-3.2.18.tar.gz"
+                    URL_HASH "SHA256=1a775bde924397a8e0c08bfda198926c17be859d0288ad0dec1dea1b2ee04f8f"
+                    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+                )
+                FetchContent_MakeAvailable(SDL3)
+                add_subdirectory(frontend/linux)
+                message(STATUS "Linux frontend enabled (SDL3 fetched)")
+            endif()
+        endif()
     else()
-        message(STATUS "SDL2 not found; building portable core only")
+        message(STATUS "Linux frontend disabled (BUILD_LINUX_FRONTEND=OFF)")
     endif()
 else()
     message(STATUS "Windows/frontend omitted on this host; building the portable Full Static core.")
