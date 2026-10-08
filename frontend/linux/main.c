@@ -244,13 +244,21 @@ int main(int argc, char **argv)
 
     SDL_free(rom);
 
-    if (init_sdl() != 0) {
+    /* Reset immediately after create to validate the core before touching
+       SDL.  This separates a core-initialisation failure from an SDL failure. */
+    if (simcity_recomp_reset(g_recomp, error, sizeof(error)) != 1) {
+        const char *inst_err = simcity_recomp_last_error(g_recomp);
+        if (error[0])
+            fprintf(stderr, "simcity_recomp_reset failed: %s\n", error);
+        else if (inst_err && inst_err[0])
+            fprintf(stderr, "simcity_recomp_reset failed: (instance) %s\n", inst_err);
+        else
+            fprintf(stderr, "simcity_recomp_reset failed: unknown error\n");
         simcity_recomp_destroy(g_recomp);
         return 1;
     }
 
-    if (simcity_recomp_reset(g_recomp, error, sizeof(error)) != 0) {
-        fprintf(stderr, "simcity_recomp_reset failed: %s\n", error);
+    if (init_sdl() != 0) {
         simcity_recomp_destroy(g_recomp);
         return 1;
     }

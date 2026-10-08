@@ -782,13 +782,18 @@ int sc_v28_render_first_visible_frame(const SCV11Runtime *runtime,
     int expand_city_view;
 
     memset(&result, 0, sizeof(result));
-    size_t output_pixels = (size_t)output_width * SC_V28_FRAME_HEIGHT;
+    size_t output_pixels = (size_t)output_width * SC_V11_VIDEO_HEIGHT;
     if (!runtime || !out555 || !out32 || !report ||
         output_width < SC_V28_FRAME_WIDTH ||
         output_width > SC_V28_MAX_FRAME_WIDTH ||
         left_margin > output_width - SC_V28_FRAME_WIDTH ||
-        cap555 < output_pixels || cap32 < output_pixels)
+        cap555 < output_pixels || cap32 < output_pixels) {
+        (void)snprintf(result.error, sizeof(result.error),
+            "render validation failed: width=%u margin=%u cap555=%zu cap32=%zu required=%zu",
+            output_width, left_margin, cap555, cap32, output_pixels);
+        *report = result;
         return 0;
+    }
 
     g_runtime = runtime;
     g_vram = runtime->machine.vram;
