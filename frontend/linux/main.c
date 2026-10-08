@@ -25,6 +25,8 @@ static SimCityRecomp *g_recomp = NULL;
 static SDL_Window *g_window = NULL;
 static SDL_Renderer *g_renderer = NULL;
 static SDL_Texture *g_texture = NULL;
+static SDL_GameController *g_gamepad = NULL;
+static SDL_mutex *g_audio_mutex = NULL;
 static int g_running = 1;
 static uint32_t g_frame_count = 0;
 static int g_target_width = 512;
@@ -45,6 +47,25 @@ static const struct {
     { SDL_SCANCODE_RETURN,SIMCITY_INPUT_START },
     { SDL_SCANCODE_BACKSPACE, SIMCITY_INPUT_SELECT },
     { SDL_SCANCODE_Q,     SIMCITY_INPUT_Y },
+};
+
+static const struct {
+    SDL_GameControllerButton btn;
+    uint16_t mask;
+} GAMEPADMAP[] = {
+    { SDL_CONTROLLER_BUTTON_DPAD_UP,    SIMCITY_INPUT_UP },
+    { SDL_CONTROLLER_BUTTON_DPAD_DOWN,  SIMCITY_INPUT_DOWN },
+    { SDL_CONTROLLER_BUTTON_DPAD_LEFT,  SIMCITY_INPUT_LEFT },
+    { SDL_CONTROLLER_BUTTON_DPAD_RIGHT, SIMCITY_INPUT_RIGHT },
+    { SDL_CONTROLLER_BUTTON_A,          SIMCITY_INPUT_B },      /* A = B (confirm) */
+    { SDL_CONTROLLER_BUTTON_B,          SIMCITY_INPUT_A },      /* B = A (cancel) */
+    { SDL_CONTROLLER_BUTTON_X,          SIMCITY_INPUT_Y },      /* X = Y */
+    { SDL_CONTROLLER_BUTTON_Y,          SIMCITY_INPUT_X },      /* Y = X */
+    { SDL_CONTROLLER_BUTTON_LEFTSHOULDER, SIMCITY_INPUT_L },
+    { SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, SIMCITY_INPUT_R },
+    { SDL_CONTROLLER_BUTTON_START,      SIMCITY_INPUT_START },
+    { SDL_CONTROLLER_BUTTON_BACK,       SIMCITY_INPUT_SELECT },
+    { SDL_CONTROLLER_BUTTON_GUIDE,      SIMCITY_INPUT_START },  /* Steam button = Start */
 };
 
 static void audio_callback(void *userdata, Uint8 *stream, int len)
@@ -116,6 +137,12 @@ static int init_sdl(void)
         return -1;
     }
 
+    g_audio_mutex = SDL_CreateMutex();
+    if (!g_audio_mutex) {
+        fprintf(stderr, "SDL_CreateMutex failed: %s\n", SDL_GetError());
+        return -1;
+    }
+
     g_window = SDL_CreateWindow("SimCity SNES Static Recomp",
                                  100, 100,
                                  g_target_width, g_target_height,
@@ -141,8 +168,12 @@ static int init_sdl(void)
                         : SIMCITY_RECOMP_FRAME_WIDTH;
     int tex_height = SIMCITY_RECOMP_FRAME_HEIGHT;
 
+    /* Core outputs uint32_t pixels in format 0xAARRGGBB (A=0xFF, R, G, B).
+     * On little-endian x86_64, memory layout is: B, G, R, A.
+     * SDL_PIXELFORMAT_XRGB8888 expects pixel value 0xXXRRGGBB -> memory B, G, R, X.
+     * This matches our output exactly (alpha byte ignored). */
     g_texture = SDL_CreateTexture(g_renderer,
-                                   SDL_PIXELFORMAT_BGRA8888,  /* matches core's BGRA output */
+                                   SDL_PIXELFORMAT_XRGB8888,
                                    SDL_TEXTUREACCESS_STREAMING,
                                    tex_width, tex_height);
     if (!g_texture) {
@@ -155,7 +186,7 @@ static int init_sdl(void)
     spec.freq = SIMCITY_RECOMP_HOST_AUDIO_SAMPLE_RATE;
     spec.format = AUDIO_S16SYS;
     spec.channels = 2;
-    spec.samples = 1024;
+    spec.samples = 8192;  /* Larger buffer for Steam Deck to prevent underruns */
     spec.callback = audio_callback;
 
     if (SDL_OpenAudio(&spec, NULL) != 0) {
@@ -164,6 +195,14 @@ static int init_sdl(void)
     }
 
     SDL_PauseAudio(0);
+
+    /* Initialize gamepad support for Steam Deck */
+    if (SDL_NumJoysticks() > 0) {
+        g_gamepad = SDL_GameControllerOpen(0);
+        if (g_gamepad) {
+            fprintf(stderr, "Gamepad connected: %s\n", SDL_GameControllerName(g_gamepad));
+        }
+    }
 
     return 0;
 }
@@ -175,6 +214,15 @@ static void handle_input(uint16_t *input_mask)
     for (size_t i = 0; i < sizeof(KEYMAP) / sizeof(KEYMAP[0]); i++) {
         if (keys[KEYMAP[i].scan]) {
             *input_mask |= KEYMAP[i].mask;
+        }
+    }
+
+    /* Gamepad input (Steam Deck) */
+    if (g_gamepad) {
+        for (size_t i = 0; i < sizeof(GAMEPADMAP) / sizeof(GAMEPADMAP[0]); i++) {
+            if (SDL_GameControllerGetButton(g_gamepad, GAMEPADMAP[i].btn)) {
+                *input_mask |= GAMEPADMAP[i].mask;
+            }
         }
     }
 }
@@ -358,9 +406,20 @@ int main(int argc, char **argv)
     simcity_recomp_destroy(g_recomp);
     g_recomp = NULL;
 
+    if (g_gamepad) {
+        SDL_GameControllerClose(g_gamepad);
+        g_gamepad = NULL;
+    }
+
     SDL_DestroyTexture(g_texture);
     SDL_DestroyRenderer(g_renderer);
     SDL_DestroyWindow(g_window);
+    
+    if (g_audio_mutex) {
+        SDL_DestroyMutex(g_audio_mutex);
+        g_audio_mutex = NULL;
+    }
+    
     SDL_Quit();
 
     return 0;

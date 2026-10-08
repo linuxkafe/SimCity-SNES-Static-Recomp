@@ -111,9 +111,11 @@ static uint16_t cgram_color(unsigned index) {
 }
 
 static uint32_t bgra(uint16_t color) {
-    uint32_t red = (color & 31u) * 255u / 31u;
+    /* SNES CGRAM stores colors in BGR555 format:
+     * bits 0-4 = Blue, bits 5-9 = Green, bits 10-14 = Red */
+    uint32_t blue = (color & 31u) * 255u / 31u;
     uint32_t green = ((color >> 5) & 31u) * 255u / 31u;
-    uint32_t blue = ((color >> 10) & 31u) * 255u / 31u;
+    uint32_t red = ((color >> 10) & 31u) * 255u / 31u;
     return 0xFF000000u | (blue) | (green << 8) | (red << 16);
 }
 
