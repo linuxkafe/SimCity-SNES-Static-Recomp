@@ -48,8 +48,18 @@ endif()
 
 if(WIN32)
     add_subdirectory(frontend/windows)
+elseif(UNIX AND NOT APPLE)
+    # Linux frontend using SDL2
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(SDL2 REQUIRED sdl2)
+    if(SDL2_FOUND)
+        add_subdirectory(frontend/linux)
+        message(STATUS "Linux frontend enabled (SDL2)")
+    else()
+        message(STATUS "SDL2 not found; building portable core only")
+    endif()
 else()
-    message(STATUS "Windows frontend omitted on this host; building the portable Full Static core.")
+    message(STATUS "Windows/frontend omitted on this host; building the portable Full Static core.")
 endif()
 
 install(TARGETS simcity-static-recomp ARCHIVE DESTINATION lib
