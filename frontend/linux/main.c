@@ -7,8 +7,19 @@
 #include <string.h>
 #include <stdint.h>
 
-#define WINDOW_WIDTH 512
-#define WINDOW_HEIGHT 480
+/* Resolution presets matching common display resolutions */
+typedef struct {
+    int width;
+    int height;
+    const char *name;
+} Resolution;
+
+static const Resolution RESOLUTIONS[] = {
+    { 1280, 720,  "720p"  },
+    { 1280, 800,  "800p"  },
+    { 1920, 1080, "1080p" },
+    { 512,  480,  "480p"  },  /* default / fallback */
+};
 
 static SimCityRecomp *g_recomp = NULL;
 static SDL_Window *g_window = NULL;
@@ -16,6 +27,8 @@ static SDL_Renderer *g_renderer = NULL;
 static SDL_Texture *g_texture = NULL;
 static int g_running = 1;
 static uint32_t g_frame_count = 0;
+static int g_target_width = 512;
+static int g_target_height = 480;
 
 static const struct {
     SDL_Scancode scan;
@@ -105,7 +118,7 @@ static int init_sdl(void)
 
     g_window = SDL_CreateWindow("SimCity SNES Static Recomp",
                                  100, 100,
-                                 WINDOW_WIDTH, WINDOW_HEIGHT,
+                                 g_target_width, g_target_height,
                                  SDL_WINDOW_RESIZABLE);
     if (!g_window) {
         fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
@@ -121,11 +134,17 @@ static int init_sdl(void)
         return -1;
     }
 
+    /* Core outputs at 256x239 (standard) or 398x239 (widescreen).
+     * We create a texture at the core's output resolution and scale via renderer. */
+    int tex_width = simcity_recomp_widescreen_enabled(g_recomp)
+                        ? SIMCITY_RECOMP_WIDESCREEN_WIDTH
+                        : SIMCITY_RECOMP_FRAME_WIDTH;
+    int tex_height = SIMCITY_RECOMP_FRAME_HEIGHT;
+
     g_texture = SDL_CreateTexture(g_renderer,
-                                   SDL_PIXELFORMAT_ABGR8888,
+                                   SDL_PIXELFORMAT_BGRA8888,  /* matches core's BGRA output */
                                    SDL_TEXTUREACCESS_STREAMING,
-                                   SIMCITY_RECOMP_FRAME_WIDTH,
-                                   SIMCITY_RECOMP_FRAME_HEIGHT);
+                                   tex_width, tex_height);
     if (!g_texture) {
         fprintf(stderr, "SDL_CreateTexture failed: %s\n", SDL_GetError());
         return -1;
@@ -186,13 +205,18 @@ static void render_frame(void)
     const uint32_t *bgra = simcity_recomp_frame_bgra(g_recomp);
     if (!bgra) return;
 
-    int w, h;
-    SDL_GetWindowSize(g_window, &w, &h);
+    int tex_width = simcity_recomp_widescreen_enabled(g_recomp)
+                        ? SIMCITY_RECOMP_WIDESCREEN_WIDTH
+                        : SIMCITY_RECOMP_FRAME_WIDTH;
 
     SDL_UpdateTexture(g_texture, NULL, bgra,
-                      (int)(simcity_recomp_frame_width(g_recomp) * sizeof(uint32_t)));
+                      tex_width * sizeof(uint32_t));
 
     SDL_RenderClear(g_renderer);
+
+    /* Render texture scaled to window size */
+    int w, h;
+    SDL_GetWindowSize(g_window, &w, &h);
 
     SDL_Rect dst = {0, 0, w, h};
     SDL_RenderCopy(g_renderer, g_texture, NULL, &dst);
@@ -200,13 +224,38 @@ static void render_frame(void)
     SDL_RenderPresent(g_renderer);
 }
 
+static void print_usage(const char *argv0)
+{
+    fprintf(stderr, "Usage: %s [options] --rom <path/to/rom.sfc>\n", argv0);
+    fprintf(stderr, "\nOptions:\n");
+    fprintf(stderr, "  --rom <path>     Path to SimCity (USA).sfc ROM\n");
+    fprintf(stderr, "  --resolution N   Resolution preset: 0=480p, 1=720p, 2=800p, 3=1080p (default: 0)\n");
+    fprintf(stderr, "  --widescreen     Enable widescreen mode (398x239 core output)\n");
+    fprintf(stderr, "  --help           Show this help\n");
+    fprintf(stderr, "\nEnvironment variables:\n");
+    fprintf(stderr, "  SIMCITY_ROM_PATH  ROM path (alternative to --rom)\n");
+}
+
 int main(int argc, char **argv)
 {
     const char *rom_path = NULL;
+    int resolution_idx = 0;  /* 480p default */
+    int widescreen = 0;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--rom") == 0 && i + 1 < argc) {
             rom_path = argv[++i];
+        } else if (strcmp(argv[i], "--resolution") == 0 && i + 1 < argc) {
+            resolution_idx = atoi(argv[++i]);
+            if (resolution_idx < 0 || resolution_idx >= (int)(sizeof(RESOLUTIONS)/sizeof(RESOLUTIONS[0]))) {
+                fprintf(stderr, "Invalid resolution index. Use 0-3.\n");
+                return 1;
+            }
+        } else if (strcmp(argv[i], "--widescreen") == 0) {
+            widescreen = 1;
+        } else if (strcmp(argv[i], "--help") == 0) {
+            print_usage(argv[0]);
+            return 0;
         }
     }
 
@@ -215,10 +264,12 @@ int main(int argc, char **argv)
     }
 
     if (!rom_path) {
-        fprintf(stderr, "Usage: %s --rom <path/to/rom.sfc>\n", argv[0]);
-        fprintf(stderr, "Or set SIMCITY_ROM_PATH environment variable.\n");
+        print_usage(argv[0]);
         return 1;
     }
+
+    g_target_width = RESOLUTIONS[resolution_idx].width;
+    g_target_height = RESOLUTIONS[resolution_idx].height;
 
     uint8_t *rom = NULL;
     size_t rom_size = 0;
@@ -244,8 +295,7 @@ int main(int argc, char **argv)
 
     SDL_free(rom);
 
-    /* Reset immediately after create to validate the core before touching
-       SDL.  This separates a core-initialisation failure from an SDL failure. */
+    /* Reset immediately after create to validate the core before touching SDL */
     if (simcity_recomp_reset(g_recomp, error, sizeof(error)) != 1) {
         const char *inst_err = simcity_recomp_last_error(g_recomp);
         if (error[0])
@@ -256,6 +306,15 @@ int main(int argc, char **argv)
             fprintf(stderr, "simcity_recomp_reset failed: unknown error\n");
         simcity_recomp_destroy(g_recomp);
         return 1;
+    }
+
+    /* Enable widescreen if requested */
+    if (widescreen) {
+        char ws_error[256];
+        memset(ws_error, 0, sizeof(ws_error));
+        if (simcity_recomp_set_widescreen(g_recomp, 1, ws_error, sizeof(ws_error)) != 1) {
+            fprintf(stderr, "Failed to enable widescreen: %s\n", ws_error);
+        }
     }
 
     if (init_sdl() != 0) {
