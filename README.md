@@ -1,7 +1,8 @@
 # SimCity SNES Static Recomp 1.4.0
 
-Native Windows static recompilation frontend and core for SimCity on the Super
-Nintendo Entertainment System.
+Native static recompilation core for SimCity on the Super Nintendo Entertainment
+System. Windows and Linux frontends are supported; the core builds on both
+platforms.
 
 The original game ROM is not included. Use an externally supplied, legally
 obtained ROM matching `ROM-REQUIREMENTS.txt`.
@@ -35,8 +36,8 @@ The complete runtime includes:
 - Fail-closed exact-PC S-SMP AOT and project-owned 32-phase S-DSP.
 - Native 32,040 Hz stereo PCM with knownness, overflow and hash diagnostics.
 - Battery SRAM and deterministic snapshots including continuing audio state.
-- A native accessible Win32/GDI launcher, SDL3 gamepad input and DirectSound
-  speaker output.
+- A Windows launcher (Win32/GDI, SDL3 gamepad, DirectSound) and a Linux
+  frontend (SDL2, windowed).
 - Windowed game-frame screenshots and exact fullscreen-presentation captures.
 
 ## SimCity Wide Screen
@@ -69,21 +70,47 @@ development. Snes9x-derived S-SMP execution semantics remain under their
 original license and are restricted to the generated fail-closed SimCity AOT
 authority. Neither emulator is embedded as a runtime fallback.
 
-## Controls and files
+## Linux frontend
 
-The launcher provides accessible Welcome, Settings, Controls, Audio and
-snapshot windows. Escape switches between gameplay and the launcher; keys 1
-and 2 save/load the current quick-snapshot slot. The function-key group then
-runs from F1 for Welcome through F2/F3 save/load snapshots, F4 Settings, F5
-Controls, F6 Audio, F7 Run and F8 Screenshot. Closing Welcome or another
-frontend dialog restores foreground and keyboard focus to the game or the
-previous launcher control.
+The Linux frontend uses SDL2 for window management, rendering and audio. It
+accepts the ROM path via command-line argument or the `SIMCITY_ROM_PATH`
+environment variable.
 
-Configuration is stored in `settings.ini`. On a clean first launch, Welcome is
-shown once; closing it persists `General/WelcomeShown=1`, so later launches go
-directly to the launcher unless F1 is pressed. Saves, Screenshots and Logs are
-created when needed. A static-core error creates a detailed log and displays a
-large closeable error window rather than silently changing execution methods.
+```bash
+./simcity-linux --rom /path/to/SimCity\ \(USA\).sfc
+```
+
+Keyboard controls:
+
+| Key | Action |
+|-----|--------|
+| Arrow keys | D-pad |
+| Z | B |
+| X | A |
+| A | L |
+| S | R |
+| Return | Start |
+| Backspace | Select |
+| Q | Y |
+| Escape | Close |
+
+On systems where the renderer cannot access `/dev/dri/` directly (headless or
+unprivileged environments), force software rendering:
+
+```bash
+SDL_VIDEO_RENDERER=software ./simcity-linux --rom /path/to/rom.sfc
+```
+
+### Linux build dependencies
+
+| Package | Ubuntu/Debian | Fedora | Arch | openSUSE |
+|---------|---------------|--------|------|----------|
+| CMake >= 3.20 | `cmake` | `cmake` | `cmake` | `cmake` |
+| GCC / Clang | `gcc g++` | `gcc gcc-c++` | `gcc` | `gcc gcc-c++` |
+| SDL2 devel | `libsdl2-dev` | `SDL2-devel` | `sdl2` | `SDL2-devel` |
+
+A ROM matching `ROM-REQUIREMENTS.txt` is needed at runtime but is **never**
+distributed with the build.
 
 ## Building on Windows
 
@@ -103,6 +130,71 @@ ctest --test-dir build -C Release --output-on-failure
 `build\Release\Launcher.exe` is the portable application. The optional
 `SIMCITY_TEST_ROM` CMake path enables the local real-ROM audio snapshot
 continuation test; the ROM is never copied into source or release artifacts.
+
+## Building on Linux
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc)
+ctest --test-dir build --output-on-failure
+```
+
+The executable is at `build/frontend/linux/simcity-linux`. A headless test
+binary (no window, no audio) is built at `build/frontend/linux/headless-test`
+and can be used for CI or on machines without a display server:
+
+```bash
+./scripts/headless-test.sh /path/to/SimCity\ \(USA\).sfc 300
+# OK: 300 frames advanced successfully
+# Current frame: 300
+# Instructions: 3798805
+# Master clock: 107159420
+```
+
+To build the core only (no frontend) on a system lacking SDL2:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_LINUX_FRONTEND=OFF
+cmake --build build -j$(nproc)
+```
+
+Running `ctest` without a ROM skips the real-ROM audio snapshot test; all
+pure-unit tests still run.
+
+### Steam Deck
+
+The static-recomp core compiles natively on the Steam Deck (ARM64, SteamOS
+holo). Install SDL2 first:
+
+```bash
+sudo pacman -S sdl2
+```
+
+Then build:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc)
+```
+
+Run with:
+
+```bash
+./build/frontend/linux/simcity-linux --rom /path/to/SimCity\ \(USA\).sfc
+```
+
+For a headless smoke test on the Deck (e.g. via SSH):
+
+```bash
+./build/frontend/linux/headless-test "/path/to/SimCity (USA).sfc" 300
+```
+
+The Deck has `/dev/dri` access by default when logged in as `deck`; if
+running under `sudo` or in a container, grant access first:
+
+```bash
+sudo chmod 666 /dev/dri/renderD128 /dev/dri/card0
+```
 
 ## Verification
 
