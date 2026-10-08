@@ -80,6 +80,14 @@ environment variable.
 ./simcity-linux --rom /path/to/SimCity\ \(USA\).sfc
 ```
 
+### Options
+
+| Option | Values | Default | Description |
+|--------|--------|---------|-------------|
+| `--rom <path>` | file | required | Path to SimCity (USA).sfc ROM |
+| `--resolution <N>` | 0-3 | 0 (480p) | 0=480p, 1=720p, 2=800p, 3=1080p |
+| `--widescreen` | flag | off | Enable 398x239 core widescreen output |
+
 Keyboard controls:
 
 | Key | Action |
@@ -112,65 +120,10 @@ SDL_VIDEO_RENDERER=software ./simcity-linux --rom /path/to/rom.sfc
 A ROM matching `ROM-REQUIREMENTS.txt` is needed at runtime but is **never**
 distributed with the build.
 
-## Building on Windows
-
-Requirements:
-
-- Windows 10 or later
-- CMake 3.20 or later
-- Visual Studio 2022 with Desktop development with C++
-- Internet access during the first configure for pinned SDL3 gamepad source
-
-```powershell
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64
-cmake --build build --config Release --parallel
-ctest --test-dir build -C Release --output-on-failure
-```
-
-`build\Release\Launcher.exe` is the portable application. The optional
-`SIMCITY_TEST_ROM` CMake path enables the local real-ROM audio snapshot
-continuation test; the ROM is never copied into source or release artifacts.
-
-## Building on Linux
-
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j$(nproc)
-ctest --test-dir build --output-on-failure
-```
-
-The executable is at `build/frontend/linux/simcity-linux`. A headless test
-binary (no window, no audio) is built at `build/frontend/linux/headless-test`
-and can be used for CI or on machines without a display server:
-
-```bash
-./scripts/headless-test.sh /path/to/SimCity\ \(USA\).sfc 300
-# OK: 300 frames advanced successfully
-# Current frame: 300
-# Instructions: 3798805
-# Master clock: 107159420
-```
-
-To build the core only (no frontend) on a system lacking SDL2:
-
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_LINUX_FRONTEND=OFF
-cmake --build build -j$(nproc)
-```
-
-Running `ctest` without a ROM skips the real-ROM audio snapshot test; all
-pure-unit tests still run.
-
 ### Steam Deck
 
-The static-recomp core compiles natively on the Steam Deck (ARM64, SteamOS
-holo). Install SDL2 first:
-
-```bash
-sudo pacman -S sdl2
-```
-
-Then build:
+The static-recomp core compiles natively on the Steam Deck (x86_64, SteamOS
+holo). SDL2 is pre-installed on SteamOS.
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -180,20 +133,81 @@ cmake --build build -j$(nproc)
 Run with:
 
 ```bash
-./build/frontend/linux/simcity-linux --rom /path/to/SimCity\ \(USA\).sfc
+./build/frontend/linux/simcity-linux --rom /path/to/SimCity\ \(USA\).sfc --resolution 2 --widescreen
 ```
 
-For a headless smoke test on the Deck (e.g. via SSH):
+#### Steam Deck Gaming Mode (Recommended)
+
+For the best experience, use the provided launcher:
+
+```bash
+# Copy ROM to data directory
+mkdir -p ~/simcity-data
+cp /path/to/SimCity\ \(USA\).sfc ~/simcity-data/SimCity.sfc
+
+# Run from Gaming Mode application launcher
+# "SimCity SNES Static Recomp" appears in Games category
+```
+
+Or via script:
+
+```bash
+~/simcity-data/run_simcity.sh
+```
+
+The launcher configures:
+- Resolution: 800p (1280x800) — optimal for Deck's 1280x800 display
+- Widescreen: Enabled (398x239 core output)
+- Video driver: Wayland (via gamescope)
+
+#### Headless smoke test (via SSH)
+
+```bash
+SDL_VIDEODRIVER=dummy ./build/frontend/linux/simcity-linux --rom "/path/to/SimCity (USA).sfc" --resolution 0
+# Gamepad connected: Steam Deck Controller
+```
+
+Or use the headless test binary (no window, no audio):
 
 ```bash
 ./build/frontend/linux/headless-test "/path/to/SimCity (USA).sfc" 300
+# OK: 300 frames advanced successfully
+# Current frame: 300
+# Instructions: 3798805
+# Master clock: 107159420
 ```
 
-The Deck has `/dev/dri` access by default when logged in as `deck`; if
-running under `sudo` or in a container, grant access first:
+#### SDL3/Vulkan Build (Experimental)
+
+For native Vulkan renderer on Steam Deck:
 
 ```bash
-sudo chmod 666 /dev/dri/renderD128 /dev/dri/card0
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSDL_FORCE_SDL3=ON
+cmake --build build -j$(nproc)
+```
+
+This fetches and builds SDL3 from source with Vulkan support enabled.
+
+#### Known Steam Deck Issues
+
+| Issue | Status | Workaround |
+|-------|--------|------------|
+| Video driver only works in Gaming Mode | Expected | Run from Gaming Mode, not Desktop/SSH |
+| SDL2 used by default (not Vulkan) | By design | Use `-DSDL_FORCE_SDL3=ON` for Vulkan |
+| SSH/X11/Wayland fail outside gamescope | Expected | Use `SDL_VIDEODRIVER=dummy` for headless test |
+
+### Quick Deploy Script
+
+```bash
+./deploy-linux.sh
+# Creates dist/linux/ with binary, run script, and README
+```
+
+Or use the simplified Makefile:
+
+```bash
+make -f Makefile.linux.simple dist       # Build + create dist/
+make -f Makefile.linux.simple steam-deck # Build + deploy to Steam Deck via scp
 ```
 
 ## Verification

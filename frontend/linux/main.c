@@ -168,12 +168,13 @@ static int init_sdl(void)
                         : SIMCITY_RECOMP_FRAME_WIDTH;
     int tex_height = SIMCITY_RECOMP_FRAME_HEIGHT;
 
-    /* Core outputs uint32_t pixels in format 0xAARRGGBB (A=0xFF, R, G, B).
-     * On little-endian x86_64, memory layout is: B, G, R, A.
-     * SDL_PIXELFORMAT_XRGB8888 expects pixel value 0xXXRRGGBB -> memory B, G, R, X.
-     * This matches our output exactly (alpha byte ignored). */
+    /* Core produces uint32_t in format 0xAARRGGBB.
+     * In little-endian memory: BB GG RR AA.
+     * SDL_PIXELFORMAT_ABGR8888 expects exactly this layout.
+     * Previously using XRGB8888 which expects BB GG RR XX (X=0),
+     * but our alpha byte is 0xFF, not 0. */
     g_texture = SDL_CreateTexture(g_renderer,
-                                   SDL_PIXELFORMAT_XRGB8888,
+                                   SDL_PIXELFORMAT_ABGR8888,
                                    SDL_TEXTUREACCESS_STREAMING,
                                    tex_width, tex_height);
     if (!g_texture) {
