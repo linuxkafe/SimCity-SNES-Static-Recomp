@@ -247,6 +247,29 @@ Per-frame SHA-256 of the framebuffer is diagnostic metadata with no consumer
 outside the renderer, and cost ~3 ms per frame. It is now computed only while a
 static-core log is open.
 
+## Licensing
+
+**This repository currently ships no `LICENSE` file, and none can be asserted
+here.** This section records the facts rather than granting terms.
+
+- The project is derived from an upstream repository (`Junior-Jones/SimCity-SNES-Static-Recomp`,
+  reachable via the `upstream` git remote). Its terms govern what this
+  distribution may do; they have not been verified here.
+- `static-recomp/static-audio/snes9x-bapu-aot/` contains retained Snes9x
+  SPC700 execution semantics. The bundled `SNES9X-LICENSE.txt` is **not** an
+  OSI-approved licence. It states Snes9x is "freeware for PERSONAL USE only"
+  and that commercial users "should seek permission of the copyright holders
+  first".
+- Because of that embedded restriction, this combined work cannot be
+  relicensed under a permissive licence such as MIT, BSD or Apache by the
+  project alone, and commercial redistribution is not clearly permitted.
+- `SDL3` (zlib) and the project-owned S-DSP are separable and are documented in
+  `THIRD-PARTY-NOTICES.txt`.
+
+Anyone wishing to publish or redistribute this must first resolve the Snes9x
+personal-use-only clause with its copyright holders, and confirm the upstream
+terms. That is a legal decision for the copyright holder, not a build setting.
+
 ## Verification
 
 The source includes contract tests for controller ordering, configuration,
