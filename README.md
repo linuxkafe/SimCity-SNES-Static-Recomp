@@ -86,7 +86,29 @@ environment variable.
 |--------|--------|---------|-------------|
 | `--rom <path>` | file | required | Path to SimCity (USA).sfc ROM |
 | `--resolution <N>` | 0-3 | 0 (480p) | 0=480p, 1=720p, 2=800p, 3=1080p |
+| `--size <WxH>` | e.g. `1280x800` | — | Arbitrary window size; overrides `--resolution` |
 | `--widescreen` | flag | off | Enable 398x239 core widescreen output |
+| `--soft-mouse` | flag | off | Drive the guest d-pad cursor from the host pointer |
+| `--mouse-sens <N>` | 1-64 | 2 | Soft-mouse threshold, texture px per frame |
+
+### Pointer input
+
+`--soft-mouse` maps the host pointer onto the guest's own cursor by synthesising
+d-pad presses from per-frame pointer motion. The OS cursor is hidden while it is
+on, because the guest draws its own.
+
+This is deliberately *not* a SNES Mouse emulation. That peripheral would have to
+be answered on a controller port, and the SimCity ROM never asks for one: a
+mouse is distinguished from a pad by reads past bit 15 (`$4219`/`$421A`/`$421B`),
+and the game reads `$4218` only — two ordinary 2-byte controller reads. Driving
+the guest's d-pad cursor is the only mouse-shaped behaviour this title can use.
+
+Motion is mapped by rate, not by position feedback. The core exposes cursor X
+(`$025D`, `$01EB`) but has no cursor Y, and guessing that address would steer the
+cursor diagonally into map edges. Rate mapping needs no guest state, at the cost
+of no self-correction: if the guest's step size differs from pointer speed the
+cursor lags slightly. Keyboard and gamepad d-pad always take priority, so the two
+input paths cannot fight over the cursor.
 
 Keyboard controls:
 
