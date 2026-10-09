@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.20)
 
 add_executable(simcity-linux
     main.c
+    menu.c
+    gui_font.c
+    settings_ini.c
 )
 
 target_include_directories(simcity-linux PRIVATE

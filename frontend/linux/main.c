@@ -1,5 +1,8 @@
 #include "simcity_static_recomp.h"
 
+#include "menu.h"
+#include "settings_ini.h"
+
 #include <SDL.h>
 
 #include <stdio.h>
@@ -39,6 +42,9 @@ static int   g_mouse_have = 0;      /* last pointer sample valid */
 static int   g_mouse_px = 0, g_mouse_py = 0;
 static int   g_mouse_dx = 0, g_mouse_dy = 0;   /* per-frame pointer delta */
 static int   g_size_explicit = 0;        /* --size overrides --resolution */
+static SimCityMenu g_menu;
+static SimCityLinuxConfig g_config;
+static char g_settings_path[512] = "settings.ini";
 static int g_running = 1;
 static uint32_t g_frame_count = 0;
 static int g_target_width = 512;
@@ -84,6 +90,71 @@ static const struct {
    SDL_RenderCopy stretches the whole texture onto the whole window, so window
    coordinates map linearly onto texture coordinates and the guest's own cursor
    (d-pad driven) follows the pointer without any core knowledge. */
+/* Funds live at WRAM $0B9D as a 24-bit little-endian value. This address was
+   confirmed against this core: a fresh city holds $004E20, the documented
+   $20000 starting balance. Addresses taken from other emulators are NOT
+   assumed here. */
+#define SIMCITY_CHEAT_FUNDS_ADDR 0x0B9Du
+#define SIMCITY_CHEAT_FUNDS_MAX  999999u
+
+static void apply_money_cheat(void)
+{
+    uint8_t money[3];
+    unsigned value = SIMCITY_CHEAT_FUNDS_MAX;
+    money[0] = (uint8_t)(value & 0xFFu);
+    money[1] = (uint8_t)((value >> 8) & 0xFFu);
+    money[2] = (uint8_t)((value >> 16) & 0xFFu);
+    if (!simcity_recomp_write_wram(g_recomp, SIMCITY_CHEAT_FUNDS_ADDR, money, 3u))
+        fprintf(stderr, "money cheat rejected by simcity_recomp_write_wram\n");
+}
+
+/* Kept in step with the menu so the overlay and the cheat cannot disagree. */
+static void apply_config_to_frontend(void)
+{
+    int w = 0, h = 0;
+    g_soft_mouse = g_config.soft_mouse;
+    g_mouse_sens = g_config.mouse_sens;
+    if (g_window) {
+        int cw = 0, ch = 0;
+        SDL_GetWindowSize(g_window, &cw, &ch);
+        if (cw != g_config.width || ch != g_config.height) {
+            SDL_SetWindowSize(g_window, g_config.width, g_config.height);
+        }
+    }
+    if (g_renderer && g_recomp) {
+        int want = simcity_recomp_widescreen_enabled(g_recomp) ? 1 : 0;
+        if (want != g_config.widescreen) {
+            char ws_error[256];
+            memset(ws_error, 0, sizeof(ws_error));
+            if (simcity_recomp_set_widescreen(g_recomp, g_config.widescreen,
+                                              ws_error, sizeof(ws_error)) != 1)
+                fprintf(stderr, "widescreen change failed: %s\n", ws_error);
+            simcity_menu_res_size(SIMCITY_MENU_RES_COUNT - 1, &w, &h);
+        }
+        /* Texture geometry follows the widescreen flag. */
+        {
+            int tw = g_config.widescreen ? SIMCITY_RECOMP_WIDESCREEN_WIDTH
+                                         : SIMCITY_RECOMP_FRAME_WIDTH;
+            int th = SIMCITY_RECOMP_FRAME_HEIGHT;
+            if (g_texture) {
+                int tw_now = 0, th_now = 0;
+                SDL_QueryTexture(g_texture, NULL, NULL, &tw_now, &th_now);
+                if (tw_now != tw || th_now != th) {
+                    SDL_Texture *fresh = SDL_CreateTexture(
+                        g_renderer, SDL_PIXELFORMAT_ABGR8888,
+                        SDL_TEXTUREACCESS_STREAMING, tw, th);
+                    if (fresh) {
+                        SDL_DestroyTexture(g_texture);
+                        g_texture = fresh;
+                    }
+                }
+            }
+        }
+    }
+    if (g_soft_mouse) SDL_ShowCursor(SDL_DISABLE);
+    else             SDL_ShowCursor(SDL_ENABLE);
+}
+
 static void soft_mouse_sample(void)
 {
     int win_w = 0, win_h = 0, tex_w, tex_h;
@@ -380,6 +451,9 @@ static void print_usage(const char *argv0)
     fprintf(stderr, "  --soft-mouse     Drive the guest d-pad cursor from the host pointer\n");
     fprintf(stderr, "  --mouse-sens N   Soft-mouse sensitivity, texture px per frame (default 2)\n");
     fprintf(stderr, "  --help           Show this help\n");
+    fprintf(stderr, "\nIn game:\n");
+    fprintf(stderr, "  F1               Open/close the settings menu\n");
+    fprintf(stderr, "  Escape           Close the menu, or quit when it is closed\n");
     fprintf(stderr, "\nEnvironment variables:\n");
     fprintf(stderr, "  SIMCITY_ROM_PATH  ROM path (alternative to --rom)\n");
 }
@@ -389,6 +463,15 @@ int main(int argc, char **argv)
     const char *rom_path = NULL;
     int resolution_idx = 0;  /* 480p default */
     int widescreen = 0;
+
+    /* Settings file first; explicit command-line options override it. */
+    (void)simcity_settings_ini_load(g_settings_path, &g_config);
+    g_soft_mouse = g_config.soft_mouse;
+    g_mouse_sens = g_config.mouse_sens;
+    if (!g_size_explicit) {
+        g_target_width = g_config.width;
+        g_target_height = g_config.height;
+    }
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--rom") == 0 && i + 1 < argc) {
@@ -405,18 +488,23 @@ int main(int argc, char **argv)
                 g_target_width = sw;
                 g_target_height = sh;
                 g_size_explicit = 1;
+                g_config.width = sw;
+                g_config.height = sh;
             } else {
                 fprintf(stderr, "Invalid --size, expected WxH (e.g. 1280x800)\n");
                 return 1;
             }
         } else if (strcmp(argv[i], "--soft-mouse") == 0) {
             g_soft_mouse = 1;
+            g_config.soft_mouse = 1;
         } else if (strcmp(argv[i], "--mouse-sens") == 0 && i + 1 < argc) {
             g_mouse_sens = atoi(argv[++i]);
             if (g_mouse_sens < 1) g_mouse_sens = 1;
             if (g_mouse_sens > 64) g_mouse_sens = 64;
+            g_config.mouse_sens = g_mouse_sens;
         } else if (strcmp(argv[i], "--widescreen") == 0) {
             widescreen = 1;
+            g_config.widescreen = 1;
         } else if (strcmp(argv[i], "--help") == 0) {
             print_usage(argv[0]);
             return 0;
@@ -488,6 +576,9 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    simcity_menu_init(&g_menu, &g_config, g_renderer);
+    apply_config_to_frontend();
+
     Uint64 next_deadline = SDL_GetPerformanceCounter();
     const Uint64 perf_freq = SDL_GetPerformanceFrequency();
     const double frame_hz = simcity_recomp_presentation_fps();
@@ -509,10 +600,16 @@ int main(int argc, char **argv)
             if (event.type == SDL_QUIT) {
                 g_running = 0;
             }
-            if (event.type == SDL_KEYDOWN) {
-                if (event.key.keysym.sym == SDLK_ESCAPE) {
+            if (event.type == SDL_KEYDOWN &&
+                event.key.keysym.sym == SDLK_F1) {
+                simcity_menu_set_open(&g_menu, !simcity_menu_is_open(&g_menu));
+            }
+            if (event.type == SDL_KEYDOWN &&
+                event.key.keysym.sym == SDLK_ESCAPE) {
+                if (simcity_menu_is_open(&g_menu))
+                    simcity_menu_set_open(&g_menu, 0);
+                else
                     g_running = 0;
-                }
             }
             if (event.type == SDL_CONTROLLERDEVICEADDED) {
                 if (!g_gamepad && event.cdevice.which < SDL_NumJoysticks())
@@ -520,16 +617,45 @@ int main(int argc, char **argv)
             }
         }
 
-        soft_mouse_sample();
-
         uint16_t input_mask = 0;
         handle_input(&input_mask);
+
+        if (simcity_menu_is_open(&g_menu)) {
+            /* The menu pauses the guest entirely: no advance, no audio drain.
+               Advancing here would spend money or move the city underneath the
+               settings the player is changing. */
+            SimCityMenuAction action =
+                simcity_menu_handle_input(&g_menu, input_mask);
+            if (action == SIMCITY_MENU_ACTION_APPLY_MONEY)
+                apply_money_cheat();
+            if (action == SIMCITY_MENU_ACTION_QUIT)
+                break;
+            if (action == SIMCITY_MENU_ACTION_RESUME) {
+                apply_config_to_frontend();
+                simcity_settings_ini_save(g_settings_path, &g_config);
+            }
+            SDL_RenderClear(g_renderer);
+            render_frame();
+            {
+                int mw = 0, mh = 0;
+                SDL_GetWindowSize(g_window, &mw, &mh);
+                simcity_menu_draw(&g_menu, mw, mh);
+            }
+            SDL_RenderPresent(g_renderer);
+            SDL_Delay(16);
+            continue;
+        }
+
+        soft_mouse_sample();
 
         if (advance_frame(input_mask) != 0) {
             break;
         }
 
         render_frame();
+
+        if (g_config.freeze_money)
+            apply_money_cheat();
 
         pump_audio();
 
@@ -560,6 +686,8 @@ int main(int argc, char **argv)
             }
         }
     }
+
+    simcity_settings_ini_save(g_settings_path, &g_config);
 
     simcity_recomp_destroy(g_recomp);
     g_recomp = NULL;
