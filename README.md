@@ -199,37 +199,41 @@ Or use the headless test binary (no window, no audio):
 # Master clock: 107159420
 ```
 
-#### SDL3/Vulkan Build (Experimental)
+#### Vulkan
 
-For native Vulkan renderer on Steam Deck:
-
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSDL_FORCE_SDL3=ON
-cmake --build build -j$(nproc)
-```
-
-This fetches and builds SDL3 from source with Vulkan support enabled.
+Not implemented. SDL2 is used on all platforms. SDL3 was evaluated and
+rejected for now: its 2D renderer and audio APIs differ from SDL2's, so a
+correct port is a real port rather than a build-flag change. SDL3 also still
+carries the personal-use-only Snes9x terms noted under Licensing, so adding it
+is a decision that should be made deliberately rather than by accident.
 
 #### Known Steam Deck Issues
 
 | Issue | Status | Workaround |
 |-------|--------|------------|
 | Video driver only works in Gaming Mode | Expected | Run from Gaming Mode, not Desktop/SSH |
-| SDL2 used by default (not Vulkan) | By design | Use `-DSDL_FORCE_SDL3=ON` for Vulkan |
+| SDL2 only; no Vulkan path | Known gap | SDL3's 2D renderer differs from SDL2's API and is not implemented here |
 | SSH/X11/Wayland fail outside gamescope | Expected | Use `SDL_VIDEODRIVER=dummy` for headless test |
 
-### Quick Deploy Script
+### Deploy script
+
+`deploy-linux.sh` is the single supported convenience path. It always
+configures `Release`, builds, and stages `dist/linux/` with the binary and a
+`run.sh` that forwards any extra options:
 
 ```bash
-./deploy-linux.sh
-# Creates dist/linux/ with binary, run script, and README
+./deploy-linux.sh                 # build Release, stage dist/linux/
+./deploy-linux.sh --deck HOST     # additionally scp to HOST:~/simcity-build/
 ```
 
-Or use the simplified Makefile:
+`run.sh` passes options straight through:
 
 ```bash
-make -f Makefile.linux.simple dist       # Build + create dist/
-make -f Makefile.linux.simple steam-deck # Build + deploy to Steam Deck via scp
+dist/linux/run.sh rom.sfc --size 1280x800 --widescreen --soft-mouse
+```
+
+Plain `cmake` remains the source of truth if you would rather drive the build
+yourself.
 ```
 
 ## Performance notes (measured)
