@@ -37,7 +37,8 @@ The complete runtime includes:
 - Native 32,040 Hz stereo PCM with knownness, overflow and hash diagnostics.
 - Battery SRAM and deterministic snapshots including continuing audio state.
 - A Windows launcher (Win32/GDI, SDL3 gamepad, DirectSound) and a Linux
-  frontend (SDL2, windowed).
+  frontend (SDL2, windowed) with gamepad support, arbitrary window sizing and
+  an optional pointer-driven guest cursor, tested on Steam Deck.
 - Windowed game-frame screenshots and exact fullscreen-presentation captures.
 
 ## SimCity Wide Screen
@@ -74,7 +75,8 @@ authority. Neither emulator is embedded as a runtime fallback.
 
 The Linux frontend uses SDL2 for window management, rendering and audio. It
 accepts the ROM path via command-line argument or the `SIMCITY_ROM_PATH`
-environment variable.
+environment variable. It is tested on Steam Deck (SteamOS, x86_64), where it
+holds the native 60.0988 Hz frame cadence at 1280x800 with widescreen on.
 
 ```bash
 ./simcity-linux --rom /path/to/SimCity\ \(USA\).sfc
