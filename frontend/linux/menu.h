@@ -20,12 +20,38 @@ typedef enum {
     SIMCITY_MENU_ACTION_QUIT
 } SimCityMenuAction;
 
+/* Navigation timing. Holding a direction used to move one row per frame, so at
+   60 Hz a held d-pad ran through the whole list before the player could react.
+   The first step is immediate, then the key repeats. */
+#define SIMCITY_MENU_REPEAT_DELAY_MS 400
+#define SIMCITY_MENU_REPEAT_RATE_MS 90
+
+/* Cheats got their own submenu: freezing money is not a display setting, and
+   burying it one line below mouse sensitivity made it easy to toggle by
+   accident while adjusting the pointer. */
+typedef enum {
+    SIMCITY_CHEATS_BACK = 0,
+    SIMCITY_CHEATS_MONEY,
+    SIMCITY_CHEATS_FREEZE_MONEY,
+    SIMCITY_CHEATS_COUNT
+} SimCityCheatRow;
+
 typedef struct {
     SimCityGui gui;
     SimCityLinuxConfig *config;
     int open;
     int selected;
     int money_applied;   /* one-shot cheat fired this session */
+
+    /* Cheats submenu. */
+    int in_cheats;
+    int cheat_selected;
+
+    /* Edge detection for navigation. prev_input is last frame's mask; the
+       timestamps are when the held direction started and when it last stepped. */
+    uint16_t prev_input;
+    Uint32 hold_started_ms;
+    Uint32 last_step_ms;
 } SimCityMenu;
 
 /* Resolution presets cycled by the RESOLUTION row. Index order matches

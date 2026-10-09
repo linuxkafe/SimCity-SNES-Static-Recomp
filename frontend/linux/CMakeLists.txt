@@ -72,3 +72,22 @@ target_compile_options(simcity-pixel-format PRIVATE
 add_test(NAME simcity-pixel-format COMMAND simcity-pixel-format)
 set_tests_properties(simcity-pixel-format PROPERTIES
     ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+
+# End-to-end colour check through the real core: run the ROM, upload the frame
+# exactly as the frontend does, read it back and require the channels to be
+# unchanged. Registered only when a test ROM is supplied.
+if(SIMCITY_TEST_ROM)
+    add_executable(simcity-frame-colors test_frame_colors.c)
+    target_link_libraries(simcity-frame-colors PRIVATE
+        simcity-static-recomp ${SDL2_LIBRARIES})
+    target_include_directories(simcity-frame-colors PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${CMAKE_SOURCE_DIR}/static-recomp/include"
+        ${SDL2_INCLUDE_DIRS})
+    target_compile_options(simcity-frame-colors PRIVATE
+        -Wall -Wextra -Wpedantic -Werror)
+    add_test(NAME simcity-frame-colors
+        COMMAND simcity-frame-colors "${SIMCITY_TEST_ROM}")
+    set_tests_properties(simcity-frame-colors PROPERTIES
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+endif()
