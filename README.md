@@ -245,7 +245,13 @@ Frame budget on the Steam Deck is 16.641 ms (60.0988 Hz NTSC). Measured with
 |---------------|-----------|----------|
 | `-O0` build, frame rendered twice | ~105 ms | ~10 fps |
 | `-O3` Release, frame rendered twice | ~34 ms | ~29 fps |
-| `-O3` Release, single render (current) | ~15.4 ms | **56-57 fps** |
+| `-O3` Release, single render (current) | ~15.4 ms | **57.4 fps avg** |
+
+Frame work is 15.4 ms inside a 16.641 ms budget, leaving ~1.2 ms of slack.
+`SDL_Delay` has roughly millisecond granularity and tends to overshoot, so the
+loop reaches 60 fps intermittently rather than holding it; the average on the
+Deck is 57.4 fps. Reaching a locked 60 would need a sub-millisecond wait tail
+(`SDL_DelayNS` or a spin), which was not judged worth the CPU.
 
 Three separate problems were compounding:
 
@@ -260,8 +266,14 @@ Three separate problems were compounding:
    frames in both display modes.
 3. **Audio backlog, not underrun.** The SDL device buffer was 8192 frames,
    which is 256 ms of slack at 32,040 Hz. SDL drains PCM in real time, so a
-   quarter-second backlog is permanent, audible latency. The buffer is now 512
-   frames (~16 ms) and surplus PCM is discarded per frame to bound drift.
+   quarter-second backlog is permanent, audible latency. The device buffer is
+   now 512 frames (16 ms), PCM is handed over with `SDL_QueueAudio`, and surplus
+   is discarded per frame to bound drift.
+
+   Measured end-to-end queue occupancy on the Deck over 58 samples: **min
+   16.6 ms, median 22.1 ms, max 33.3 ms**, with the core-side backlog at zero
+   throughout. That is the buffering actually in front of the speaker; the
+   512-frame figure is only the device buffer, not the whole latency.
 
 Audio reaches the device with `SDL_QueueAudio` from the main thread. The
 callback form let SDL's audio thread read the core's PCM ring while the main
