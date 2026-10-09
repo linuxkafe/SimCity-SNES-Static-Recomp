@@ -201,40 +201,61 @@ void simcity_menu_draw(SimCityMenu *menu, int window_w, int window_h)
     static const SDL_Color kValue = { 120, 200, 255, 255 };
     static const SDL_Color kSelBg = { 40, 40, 40, 255 };
 
-    int panel_w, panel_h, x0, y0, y, i;
+    const int panel_h_base = 40 + ROW_COUNT * 22 + 34;
+    int panel_w, panel_h, x0, y0, y, i, menu_scale = 1;
     char value[32];
 
     if (!menu->open) return;
 
-    panel_w = 380;
-    panel_h = 40 + ROW_COUNT * 22 + 34;
-    if (panel_w > window_w - 20) panel_w = window_w - 20;
-    if (panel_h > window_h - 20) panel_h = window_h - 20;
+    /* The glyph grid is 5x7 pixels, so the panel is built at 1:1 and then
+       scaled by an integer factor derived from the window. Without this the
+       menu is a few hundred pixels of unreadable text in the middle of a
+       1280x800 window. Factor 1 on a 640-wide window, up to 4x when there is
+       room. */
+    {
+        int scale = window_h / 200;
+        if (scale < 1) scale = 1;
+        if (scale > 4) scale = 4;
+        /* Never wider or taller than the window even after scaling. */
+        while (scale > 1 &&
+               (380 * scale > window_w - 20 || panel_h_base * scale > window_h - 20)) {
+            scale--;
+        }
+        menu_scale = scale;
+    }
+
+    panel_w = 380 * menu_scale;
+    panel_h = panel_h_base * menu_scale;
     x0 = (window_w - panel_w) / 2;
     y0 = (window_h - panel_h) / 2;
 
+    simcity_gui_set_scale(&menu->gui, menu_scale);
     simcity_gui_set_colors(&menu->gui, kText, kPanel);
     simcity_gui_fill_rect(&menu->gui, x0, y0, panel_w, panel_h);
     simcity_gui_frame_rect(&menu->gui, x0, y0, panel_w, panel_h);
 
-    y = y0 + 14;
+    y = y0 + 14 * menu_scale;
     simcity_gui_text_centered(&menu->gui, window_w / 2, y, "SETTINGS");
-    y += 22;
+    y += 22 * menu_scale;
 
     for (i = 0; i < ROW_COUNT; ++i) {
-        int row_x = x0 + 14;
-        int row_w = panel_w - 28;
+        int row_x = x0 + 14 * menu_scale;
+        int row_w = panel_w - 28 * menu_scale;
         if (i == menu->selected) {
             simcity_gui_set_colors(&menu->gui, kValue, kSelBg);
-            simcity_gui_fill_rect(&menu->gui, x0 + 8, y - 3, panel_w - 16, 15);
+            simcity_gui_fill_rect(&menu->gui, x0 + 8 * menu_scale,
+                                  y - 3 * menu_scale,
+                                  panel_w - 16 * menu_scale, 15);
         } else {
             simcity_gui_set_colors(&menu->gui, kText, kPanel);
         }
         simcity_gui_text(&menu->gui, row_x, y, kLabels[i]);
         value_text(menu, i, value, sizeof(value));
-        simcity_gui_text(&menu->gui, row_x + row_w - simcity_gui_text_width(value),
+        simcity_gui_text(&menu->gui,
+                         row_x + row_w - simcity_gui_text_width_scaled(value,
+                                                                        menu_scale),
                          y, value);
-        y += 18;
+        y += 18 * menu_scale;
     }
 
     simcity_gui_set_colors(&menu->gui, kValue, kPanel);

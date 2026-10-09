@@ -111,10 +111,16 @@ static const unsigned char kGlyphs[95][SIMCITY_GLYPH_W] = {
 void simcity_gui_init(SimCityGui *gui, SDL_Renderer *renderer)
 {
     gui->renderer = renderer;
+    gui->scale = 1;
     gui->foreground.r = 0xFAu; gui->foreground.g = 0xFAu;
     gui->foreground.b = 0xFAu; gui->foreground.a = 0xFFu;
     gui->background.r = 0u; gui->background.g = 0u;
     gui->background.b = 0u; gui->background.a = 0xFFu;
+}
+
+void simcity_gui_set_scale(SimCityGui *gui, int scale)
+{
+    gui->scale = scale < 1 ? 1 : scale;
 }
 
 void simcity_gui_set_colors(SimCityGui *gui, SDL_Color fg, SDL_Color bg)
@@ -129,7 +135,7 @@ void simcity_gui_fill_rect(SimCityGui *gui, int x, int y, int w, int h)
     if (!gui->renderer || w <= 0 || h <= 0) return;
     SDL_SetRenderDrawColor(gui->renderer, gui->background.r, gui->background.g,
                            gui->background.b, gui->background.a);
-    r.x = x; r.y = y; r.w = w; r.h = h;
+    r.x = x; r.y = y; r.w = w * gui->scale; r.h = h * gui->scale;
     SDL_RenderFillRect(gui->renderer, &r);
 }
 
@@ -139,12 +145,12 @@ void simcity_gui_frame_rect(SimCityGui *gui, int x, int y, int w, int h)
     if (!gui->renderer || w <= 2 || h <= 2) return;
     SDL_SetRenderDrawColor(gui->renderer, gui->foreground.r, gui->foreground.g,
                            gui->foreground.b, gui->foreground.a);
-    r.x = x; r.y = y; r.w = w; r.h = 1;
+    r.x = x; r.y = y; r.w = w * gui->scale; r.h = gui->scale;
     SDL_RenderDrawRect(gui->renderer, &r);
-    r.y = y + h - 1; SDL_RenderDrawRect(gui->renderer, &r);
-    r.x = x; r.y = y; r.w = 1; r.h = h;
+    r.y = y + h * gui->scale - gui->scale; SDL_RenderDrawRect(gui->renderer, &r);
+    r.x = x; r.y = y; r.w = gui->scale; r.h = h * gui->scale;
     SDL_RenderDrawRect(gui->renderer, &r);
-    r.x = x + w - 1; SDL_RenderDrawRect(gui->renderer, &r);
+    r.x = x + w * gui->scale - gui->scale; SDL_RenderDrawRect(gui->renderer, &r);
 }
 
 int simcity_gui_text(SimCityGui *gui, int x, int y, const char *text)
@@ -167,20 +173,20 @@ int simcity_gui_text(SimCityGui *gui, int x, int y, const char *text)
             for (row = 0; row < SIMCITY_GLYPH_H; ++row) {
                 if (bits & (1u << row)) {
                     SDL_Rect px;
-                    px.x = pen + col;
-                    px.y = y + row;
-                    px.w = 1;
-                    px.h = 1;
+                    px.x = pen + col * gui->scale;
+                    px.y = y + row * gui->scale;
+                    px.w = gui->scale;
+                    px.h = gui->scale;
                     SDL_RenderDrawRect(gui->renderer, &px);
                 }
             }
         }
-        pen += SIMCITY_GLYPH_ADVANCE;
+        pen += SIMCITY_GLYPH_ADVANCE * gui->scale;
     }
     return pen;
 }
 
-int simcity_gui_text_width(const char *text)
+int simcity_gui_text_width_scaled(const char *text, int scale)
 {
     int n = 0;
     const unsigned char *p = (const unsigned char *)text;
@@ -189,10 +195,11 @@ int simcity_gui_text_width(const char *text)
         if (*p >= 0x20u && *p <= 0x7Eu) n++;
         p++;
     }
-    return n > 0 ? n * SIMCITY_GLYPH_ADVANCE - 1 : 0;
+    return n > 0 ? (n * SIMCITY_GLYPH_ADVANCE - 1) * scale : 0;
 }
 
 int simcity_gui_text_centered(SimCityGui *gui, int cx, int y, const char *text)
 {
-    return simcity_gui_text(gui, cx - simcity_gui_text_width(text) / 2, y, text);
+    int w = simcity_gui_text_width_scaled(text, gui->scale);
+    return simcity_gui_text(gui, cx - w / 2, y, text);
 }
