@@ -154,6 +154,25 @@ if(BUILD_TESTING)
             COMMAND simcity-audio-snapshot-continuation
                     "${SIMCITY_TEST_ROM}"
                     "${CMAKE_CURRENT_BINARY_DIR}/simcity-audio-continuation.scsnap")
+
+        # Contract test for the host-side WRAM write API used by cheats and
+        # mods. Needs the real ROM only to obtain an instance.
+        add_executable(simcity-wram-write
+            tests/test_wram_write.c)
+        target_link_libraries(simcity-wram-write PRIVATE
+            simcity-static-recomp)
+        target_include_directories(simcity-wram-write PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/include")
+        if(MSVC)
+            target_compile_definitions(simcity-wram-write PRIVATE
+                _CRT_SECURE_NO_WARNINGS)
+            target_compile_options(simcity-wram-write PRIVATE /W4 /WX)
+        else()
+            target_compile_options(simcity-wram-write PRIVATE
+                -Wall -Wextra -Wpedantic -Werror)
+        endif()
+        add_test(NAME simcity-wram-write
+            COMMAND simcity-wram-write "${SIMCITY_TEST_ROM}")
     endif()
 
     find_package(Python3 COMPONENTS Interpreter QUIET)
