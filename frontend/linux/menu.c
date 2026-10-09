@@ -108,8 +108,13 @@ static void adjust_row(SimCityMenu *menu, int row, int direction)
             break;
         case ROW_MOUSE_SENS:
             c->mouse_sens += direction;
-            if (c->mouse_sens < 1) c->mouse_sens = 1;
-            if (c->mouse_sens > 16) c->mouse_sens = 16;
+            if (c->mouse_sens < SIMCITY_MOUSE_SENS_MIN)
+                c->mouse_sens = SIMCITY_MOUSE_SENS_MIN;
+            if (c->mouse_sens > SIMCITY_MOUSE_SENS_MAX)
+                c->mouse_sens = SIMCITY_MOUSE_SENS_MAX;
+            break;
+        case ROW_FREEZE_MONEY:
+            c->freeze_money = !c->freeze_money;
             break;
         default:
             break;

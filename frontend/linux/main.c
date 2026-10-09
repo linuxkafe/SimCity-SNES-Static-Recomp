@@ -141,7 +141,7 @@ static void apply_config_to_frontend(void)
                 SDL_QueryTexture(g_texture, NULL, NULL, &tw_now, &th_now);
                 if (tw_now != tw || th_now != th) {
                     SDL_Texture *fresh = SDL_CreateTexture(
-                        g_renderer, SDL_PIXELFORMAT_ABGR8888,
+                        g_renderer, SDL_PIXELFORMAT_ARGB8888,
                         SDL_TEXTUREACCESS_STREAMING, tw, th);
                     if (fresh) {
                         SDL_DestroyTexture(g_texture);
@@ -298,13 +298,15 @@ static int init_sdl(void)
                         : SIMCITY_RECOMP_FRAME_WIDTH;
     int tex_height = SIMCITY_RECOMP_FRAME_HEIGHT;
 
-    /* Core produces uint32_t in format 0xAARRGGBB.
-     * In little-endian memory: BB GG RR AA.
-     * SDL_PIXELFORMAT_ABGR8888 expects exactly this layout.
-     * Previously using XRGB8888 which expects BB GG RR XX (X=0),
-     * but our alpha byte is 0xFF, not 0. */
+    /* Core produces uint32_t 0xAARRGGBB: blue in bits 0-7, green 8-15,
+     * red 16-23, alpha 24-31. The SDL format must have the same channel
+     * masks, which on this platform are:
+     *   SDL_PIXELFORMAT_ARGB8888  R=0x00FF0000 G=0x0000FF00 B=0x000000FF
+     *   SDL_PIXELFORMAT_ABGR8888  R=0x000000FF G=0x0000FF00 B=0x00FF0000
+     * ABGR8888 therefore reads our blue byte as red and swaps the two
+     * channels. Verified against SDL_AllocFormat rather than by eye. */
     g_texture = SDL_CreateTexture(g_renderer,
-                                   SDL_PIXELFORMAT_ABGR8888,
+                                   SDL_PIXELFORMAT_ARGB8888,
                                    SDL_TEXTUREACCESS_STREAMING,
                                    tex_width, tex_height);
     if (!g_texture) {
@@ -468,10 +470,11 @@ int main(int argc, char **argv)
     (void)simcity_settings_ini_load(g_settings_path, &g_config);
     g_soft_mouse = g_config.soft_mouse;
     g_mouse_sens = g_config.mouse_sens;
-    if (!g_size_explicit) {
-        g_target_width = g_config.width;
-        g_target_height = g_config.height;
-    }
+    /* Baseline from settings.ini. A command-line option that overrides it
+       writes g_config as well, so apply_config_to_frontend() at startup does
+       not resize the window straight back to the file's value. */
+    g_target_width = g_config.width;
+    g_target_height = g_config.height;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--rom") == 0 && i + 1 < argc) {
@@ -499,8 +502,10 @@ int main(int argc, char **argv)
             g_config.soft_mouse = 1;
         } else if (strcmp(argv[i], "--mouse-sens") == 0 && i + 1 < argc) {
             g_mouse_sens = atoi(argv[++i]);
-            if (g_mouse_sens < 1) g_mouse_sens = 1;
-            if (g_mouse_sens > 64) g_mouse_sens = 64;
+            if (g_mouse_sens < SIMCITY_MOUSE_SENS_MIN)
+                g_mouse_sens = SIMCITY_MOUSE_SENS_MIN;
+            if (g_mouse_sens > SIMCITY_MOUSE_SENS_MAX)
+                g_mouse_sens = SIMCITY_MOUSE_SENS_MAX;
             g_config.mouse_sens = g_mouse_sens;
         } else if (strcmp(argv[i], "--widescreen") == 0) {
             widescreen = 1;
@@ -523,6 +528,8 @@ int main(int argc, char **argv)
     if (!g_size_explicit) {
         g_target_width = RESOLUTIONS[resolution_idx].width;
         g_target_height = RESOLUTIONS[resolution_idx].height;
+        g_config.width = g_target_width;
+        g_config.height = g_target_height;
     }
 
     uint8_t *rom = NULL;
@@ -621,6 +628,12 @@ int main(int argc, char **argv)
         handle_input(&input_mask);
 
         if (simcity_menu_is_open(&g_menu)) {
+            /* The pointer delta is only resampled outside the menu branch, so
+               it would stay frozen at its last value and steer the menu for
+               as long as it stays open. Clear it so only real input moves the
+               selection. */
+            g_mouse_dx = 0;
+            g_mouse_dy = 0;
             /* The menu pauses the guest entirely: no advance, no audio drain.
                Advancing here would spend money or move the city underneath the
                settings the player is changing. */
