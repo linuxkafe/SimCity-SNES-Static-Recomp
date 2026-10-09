@@ -90,6 +90,10 @@ int simcity_recomp_log_open(const char *path, char *error,
     return 1;
 }
 
+int sc_core_logging_enabled(void) {
+    return g_core_log != NULL;
+}
+
 void simcity_recomp_log_close(void) {
     if (!g_core_log) return;
     core_logf(NULL, "log-close", "");

@@ -210,6 +210,43 @@ make -f Makefile.linux.simple dist       # Build + create dist/
 make -f Makefile.linux.simple steam-deck # Build + deploy to Steam Deck via scp
 ```
 
+## Performance notes (measured)
+
+Frame budget on the Steam Deck is 16.641 ms (60.0988 Hz NTSC). Measured with
+`SIMCITY_FPS=1`, which reports observed throughput:
+
+| Configuration | Per frame | Observed |
+|---------------|-----------|----------|
+| `-O0` build, frame rendered twice | ~105 ms | ~10 fps |
+| `-O3` Release, frame rendered twice | ~34 ms | ~29 fps |
+| `-O3` Release, single render (current) | ~15.4 ms | **56-57 fps** |
+
+Three separate problems were compounding:
+
+1. **Unoptimised build.** With no `CMAKE_BUILD_TYPE` the core compiled at
+   `-O0`. The build system now defaults `CMAKE_BUILD_TYPE` to `Release`;
+   explicitly select it for any performance measurement.
+2. **Every frame was rendered twice.** `simcity_recomp_advance()` performs the
+   host frame conversion itself, and the frontend then called
+   `simcity_recomp_render_current_frame()` on top of it. The frontend now
+   advances with `simcity_recomp_advance_headless()` and converts exactly once.
+   The two routes were verified to produce byte-identical framebuffers over 600
+   frames in both display modes.
+3. **Audio backlog, not underrun.** The SDL device buffer was 8192 frames,
+   which is 256 ms of slack at 32,040 Hz. SDL drains PCM in real time, so a
+   quarter-second backlog is permanent, audible latency. The buffer is now 512
+   frames (~16 ms) and surplus PCM is discarded per frame to bound drift.
+
+Audio reaches the device with `SDL_QueueAudio` from the main thread. The
+callback form let SDL's audio thread read the core's PCM ring while the main
+thread was still writing it in `audio_sink()`, which was a data race; queueing
+keeps one writer and one reader on different objects without holding a lock
+across the whole frame.
+
+Per-frame SHA-256 of the framebuffer is diagnostic metadata with no consumer
+outside the renderer, and cost ~3 ms per frame. It is now computed only while a
+static-core log is open.
+
 ## Verification
 
 The source includes contract tests for controller ordering, configuration,
