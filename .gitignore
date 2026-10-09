@@ -9,3 +9,7 @@ settings.ini
 Launcher-Audio.ini
 Launcher-Frontend.ini
 dist/
+
+# AES working structure is per-clone, not part of the project
+aes/
+.aes/

@@ -52,3 +52,23 @@ target_compile_options(headless-test PRIVATE
 target_compile_definitions(headless-test PRIVATE
     SIMCITY_PLATFORM_LINUX
 )
+# Settings persistence: guards the shared settings.ini contract, in particular
+# that a Linux run does not delete keys owned by the Windows launcher.
+add_executable(simcity-settings-ini test_settings_ini.c settings_ini.c)
+target_include_directories(simcity-settings-ini PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_options(simcity-settings-ini PRIVATE
+    -Wall -Wextra -Wpedantic)
+add_test(NAME simcity-settings-ini COMMAND simcity-settings-ini)
+
+# Pixel format: the core emits 0xAARRGGBB and the SDL texture format must carry
+# matching channel masks. A mismatch swaps red and blue and is invisible in a
+# headless run because nothing is presented.
+add_executable(simcity-pixel-format test_pixel_format.c)
+target_link_libraries(simcity-pixel-format PRIVATE ${SDL2_LIBRARIES})
+target_include_directories(simcity-pixel-format PRIVATE ${SDL2_INCLUDE_DIRS})
+target_compile_options(simcity-pixel-format PRIVATE
+    -Wall -Wextra -Wpedantic)
+add_test(NAME simcity-pixel-format COMMAND simcity-pixel-format)
+set_tests_properties(simcity-pixel-format PROPERTIES
+    ENVIRONMENT "SDL_VIDEODRIVER=dummy")

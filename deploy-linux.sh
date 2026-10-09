@@ -23,6 +23,20 @@ fi
 
 # Release matters: an unoptimised core runs roughly three times slower and
 # misses the 16.6 ms frame budget on its own.
+#
+# A build/ tree copied from another checkout keeps a CMakeCache.txt pointing at
+# the old absolute paths, and CMake then refuses to configure. Detect that and
+# start clean rather than making the user delete the directory by hand.
+if [ -f "$BUILD_DIR/CMakeCache.txt" ]; then
+    cached_source=$(sed -n 's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' \
+                          "$BUILD_DIR/CMakeCache.txt" 2>/dev/null | head -1)
+    if [ -n "$cached_source" ] && [ "$cached_source" != "$PROJECT_ROOT" ]; then
+        echo "Stale CMake cache from $cached_source"
+        echo "Removing $BUILD_DIR and reconfiguring from scratch."
+        rm -rf "$BUILD_DIR"
+    fi
+fi
+
 cmake -S "$PROJECT_ROOT" -B "$BUILD_DIR" \
       -DCMAKE_BUILD_TYPE=Release \
       -DBUILD_LINUX_FRONTEND=ON

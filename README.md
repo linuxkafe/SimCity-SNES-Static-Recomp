@@ -269,7 +269,6 @@ dist/linux/run.sh rom.sfc --size 1280x800 --widescreen --soft-mouse
 
 Plain `cmake` remains the source of truth if you would rather drive the build
 yourself.
-```
 
 ## Performance notes (measured)
 
@@ -375,6 +374,26 @@ state such as funds at `$0B9D`.
 `static-recomp/tests/test_wram_write.c` pins the bounds contract, the
 no-partial-write guarantee, the round trip, and that the static route survives a
 poke. It runs under `ctest` when `-DSIMCITY_TEST_ROM=<rom>` is configured.
+
+## Known issues
+
+Tracked as tickets under `aes/tickets/` following a four-persona adversarial
+review. The ones that affect a user today:
+
+| Ticket | Effect |
+|--------|--------|
+| T004 | On a host without system SDL2, CMake reports success and the build then fails. |
+| T005 | Audio back-pressure drops all queued PCM rather than the surplus, causing audible gaps. |
+| T006 | The settings menu cannot be opened on Steam Deck without a keyboard. |
+| T008 | Quitting discards the saved city: battery SRAM is never written on Linux. |
+| T002 | README (earlier revision) pointed at a launcher script that is not in the repository. |
+| T007 | No CI job builds the Linux frontend, which is how T004 shipped. |
+
+Fixed in the review round: the red/blue channel swap (B1), `--resolution` being
+discarded (B2), the inert `FREEZE MONEY` row (B3), `settings.ini` deleting every
+Windows-launcher key (B4), a frozen pointer delta steering the menu (B5), divergent
+`MouseSens` bounds (T009), and a README code fence that swallowed three sections
+(T010).
 
 ## Verification
 

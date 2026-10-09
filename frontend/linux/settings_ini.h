@@ -10,6 +10,10 @@
 #ifndef SIMCITY_SETTINGS_INI_H
 #define SIMCITY_SETTINGS_INI_H
 
+/* Soft-mouse sensitivity bounds, shared by the CLI, the loader and the menu. */
+#define SIMCITY_MOUSE_SENS_MIN 1
+#define SIMCITY_MOUSE_SENS_MAX 64
+
 typedef struct {
     int width;
     int height;
