@@ -1035,6 +1035,18 @@ int simcity_recomp_read_wram(const SimCityRecomp *instance,
     return 1;
 }
 
+int simcity_recomp_write_wram(SimCityRecomp *instance,
+                              uint32_t offset,
+                              const void *source,
+                              size_t length) {
+    size_t start=(size_t)offset;
+    if(!instance || !instance->runtime || !source) return 0;
+    if(start>sizeof(instance->runtime->machine.wram) ||
+       length>sizeof(instance->runtime->machine.wram)-start) return 0;
+    if(length) memcpy(instance->runtime->machine.wram+start,source,length);
+    return 1;
+}
+
 const char *simcity_recomp_last_error(const SimCityRecomp *instance) {
     return instance ? instance->last_error :
            "No static recompilation instance is loaded.";

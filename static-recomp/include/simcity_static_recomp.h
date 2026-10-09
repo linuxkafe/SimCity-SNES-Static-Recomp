@@ -171,6 +171,31 @@ int simcity_recomp_read_wram(const SimCityRecomp *instance,
                              void *destination,
                              size_t length);
 
+/* Bounds-checked write to the native 128 KiB SNES WRAM image, for host-side
+   cheats and mods applied between frames.
+
+   Unlike simcity_recomp_read_wram() this DOES modify emulated state.  Call it
+   only from the thread that calls simcity_recomp_advance(), and only between
+   frames: the core does not observe a concurrent host write, so a write issued
+   while a frame is advancing is a data race.
+
+   The write is visible to the next frame exactly as if the guest had stored
+   those bytes.  It does not update battery SRAM, does not disturb S-SMP/S-DSP
+   state, and is captured by later snapshots because WRAM is part of the saved
+   runtime image.
+
+   Host code must not poke PPU or camera state.  The core caches widescreen
+   cursor anchors in the instance rather than in WRAM, so writing $01BD, $0139,
+   $01EB or $025D behind its back desynchronises that cache until the cursor is
+   next rebuilt.  Cheats should target game state such as funds at $0B9D.
+
+   Returns 1 on success, 0 if the arguments are invalid or the range would
+   leave the 128 KiB image.  Nothing is written when it returns 0. */
+int simcity_recomp_write_wram(SimCityRecomp *instance,
+                              uint32_t offset,
+                              const void *source,
+                              size_t length);
+
 const char *simcity_recomp_last_error(const SimCityRecomp *instance);
 
 /* PCM is produced only by the native S-SMP/S-DSP runtime contained in this

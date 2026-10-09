@@ -292,6 +292,39 @@ Anyone wishing to publish or redistribute this must first resolve the Snes9x
 personal-use-only clause with its copyright holders, and confirm the upstream
 terms. That is a legal decision for the copyright holder, not a build setting.
 
+## Cheats and mods (host-side WRAM access)
+
+`simcity_recomp_write_wram()` lets a frontend poke guest WRAM between frames,
+which is how cheats and mods are implemented. It is the write counterpart to the
+existing bounds-checked `simcity_recomp_read_wram()`.
+
+```c
+uint8_t money[3] = { 0x3F, 0x42, 0x0F };   /* 999999 */
+simcity_recomp_write_wram(game, 0x0B9D, money, 3);
+```
+
+Contract, and the parts that are easy to get wrong:
+
+| Rule | Reason |
+|------|--------|
+| Call from the thread that calls `simcity_recomp_advance()` | the core cannot observe a concurrent host write |
+| Call between frames, never during one | a write mid-advance is a data race |
+| Nothing is written when the call returns 0 | a rejected write must not leave WRAM half-modified |
+| Range must lie inside the 128 KiB image | offsets at or past `0x20000` are rejected |
+
+The write is visible to the next frame as if the guest had stored those bytes.
+Battery SRAM, S-SMP and S-DSP state are untouched, and later snapshots capture
+it because WRAM is part of the saved runtime image.
+
+**Do not poke PPU or camera state.** The core caches widescreen cursor anchors
+in the instance rather than in WRAM, so writing `$01BD`, `$0139`, `$01EB` or
+`$025D` behind its back desynchronises that cache. Cheats should target game
+state such as funds at `$0B9D`.
+
+`static-recomp/tests/test_wram_write.c` pins the bounds contract, the
+no-partial-write guarantee, the round trip, and that the static route survives a
+poke. It runs under `ctest` when `-DSIMCITY_TEST_ROM=<rom>` is configured.
+
 ## Verification
 
 The source includes contract tests for controller ordering, configuration,
