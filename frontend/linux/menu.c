@@ -13,17 +13,16 @@
 #include <stdio.h>
 #include <string.h>
 
-enum {
+typedef enum {
     ROW_RESOLUTION = 0,
     ROW_WIDESCREEN,
     ROW_SOFT_MOUSE,
     ROW_MOUSE_SENS,
-    ROW_MONEY,
-    ROW_FREEZE_MONEY,
+    ROW_CHEATS,
     ROW_RESUME,
     ROW_QUIT,
     ROW_COUNT
-};
+} RowId;
 
 /* Must match the --resolution order in main.c. */
 static const struct {
@@ -113,7 +112,47 @@ static void adjust_row(SimCityMenu *menu, int row, int direction)
             if (c->mouse_sens > SIMCITY_MOUSE_SENS_MAX)
                 c->mouse_sens = SIMCITY_MOUSE_SENS_MAX;
             break;
-        case ROW_FREEZE_MONEY:
+        case ROW_CHEATS:
+            break;   /* enters the submenu on B, not on left/right */
+        default:
+            break;
+    }
+}
+
+/* True once, on the frame a direction becomes held. */
+static int nav_pressed(SimCityMenu *menu, uint16_t mask, uint16_t bit)
+{
+    return (mask & bit) != 0 && (menu->prev_input & bit) == 0;
+}
+
+/* True when a held direction should step again: not until the initial delay
+   has passed, then at a fixed rate. Without this the selection advanced one row
+   per frame while the key was down. */
+static int nav_repeats(SimCityMenu *menu, uint16_t mask, uint16_t bit)
+{
+    Uint32 now, elapsed;
+
+    if ((mask & bit) == 0) {
+        menu->hold_started_ms = 0;
+        return 0;
+    }
+    now = SDL_GetTicks();
+    if (menu->hold_started_ms == 0) {
+        menu->hold_started_ms = now;
+        return 0;               /* this is the initial press */
+    }
+    elapsed = now - menu->hold_started_ms;
+    if (elapsed < SIMCITY_MENU_REPEAT_DELAY_MS) return 0;
+    if (now - menu->last_step_ms < SIMCITY_MENU_REPEAT_RATE_MS) return 0;
+    return 1;
+}
+
+static void cheats_adjust(SimCityMenu *menu, int direction)
+{
+    SimCityLinuxConfig *c = menu->config;
+    (void)direction;
+    switch ((SimCityCheatRow)menu->cheat_selected) {
+        case SIMCITY_CHEATS_FREEZE_MONEY:
             c->freeze_money = !c->freeze_money;
             break;
         default:
@@ -121,39 +160,100 @@ static void adjust_row(SimCityMenu *menu, int row, int direction)
     }
 }
 
-SimCityMenuAction simcity_menu_handle_input(SimCityMenu *menu, uint16_t input_mask)
+static SimCityMenuAction cheats_input(SimCityMenu *menu, uint16_t input_mask)
 {
-    SimCityLinuxConfig *c = menu->config;
-    int row = menu->selected;
-
-    if (!menu->open) return SIMCITY_MENU_ACTION_NONE;
-
-    if (input_mask & SIMCITY_INPUT_UP) {
-        menu->selected = (row > 0) ? row - 1 : ROW_COUNT - 1;
+    int now_step = nav_pressed(menu, input_mask, SIMCITY_INPUT_UP) ||
+                   nav_repeats(menu, input_mask, SIMCITY_INPUT_UP) ||
+                   nav_pressed(menu, input_mask, SIMCITY_INPUT_DOWN) ||
+                   nav_repeats(menu, input_mask, SIMCITY_INPUT_DOWN);
+    if (nav_pressed(menu, input_mask, SIMCITY_INPUT_UP) ||
+        nav_repeats(menu, input_mask, SIMCITY_INPUT_UP)) {
+        menu->cheat_selected =
+            (menu->cheat_selected + SIMCITY_CHEATS_COUNT - 1) % SIMCITY_CHEATS_COUNT;
+        menu->last_step_ms = SDL_GetTicks();
     }
-    if (input_mask & SIMCITY_INPUT_DOWN) {
-        menu->selected = (row + 1) % ROW_COUNT;
+    if (nav_pressed(menu, input_mask, SIMCITY_INPUT_DOWN) ||
+        nav_repeats(menu, input_mask, SIMCITY_INPUT_DOWN)) {
+        menu->cheat_selected =
+            (menu->cheat_selected + 1) % SIMCITY_CHEATS_COUNT;
+        menu->last_step_ms = SDL_GetTicks();
     }
-    if (input_mask & SIMCITY_INPUT_LEFT)  adjust_row(menu, menu->selected, -1);
-    if (input_mask & SIMCITY_INPUT_RIGHT) adjust_row(menu, menu->selected, +1);
+    (void)now_step;
 
-    /* B is the cancel/confirm split used by the guest: B confirms. */
     if (input_mask & SIMCITY_INPUT_B) {
-        switch (menu->selected) {
-            case ROW_MONEY:
+        switch ((SimCityCheatRow)menu->cheat_selected) {
+            case SIMCITY_CHEATS_MONEY:
                 menu->money_applied = 1;
                 return SIMCITY_MENU_ACTION_APPLY_MONEY;
-            case ROW_RESUME:
-                menu->open = 0;
-                return SIMCITY_MENU_ACTION_RESUME;
-            case ROW_QUIT:
-                return SIMCITY_MENU_ACTION_QUIT;
+            case SIMCITY_CHEATS_FREEZE_MONEY:
+                cheats_adjust(menu, 1);
+                break;
+            case SIMCITY_CHEATS_BACK:
             default:
-                /* Toggles act immediately on left/right; B does nothing. */
+                menu->in_cheats = 0;
                 break;
         }
     }
-    (void)c;
+    if (input_mask & SIMCITY_INPUT_A) {
+        menu->in_cheats = 0;
+    }
+    return SIMCITY_MENU_ACTION_NONE;
+}
+
+SimCityMenuAction simcity_menu_handle_input(SimCityMenu *menu, uint16_t input_mask)
+{
+    int row;
+
+    if (!menu->open) {
+        menu->prev_input = input_mask;
+        return SIMCITY_MENU_ACTION_NONE;
+    }
+    if (menu->in_cheats) {
+        SimCityMenuAction a = cheats_input(menu, input_mask);
+        menu->prev_input = input_mask;
+        return a;
+    }
+
+    row = menu->selected;
+
+    if (nav_pressed(menu, input_mask, SIMCITY_INPUT_UP) ||
+        nav_repeats(menu, input_mask, SIMCITY_INPUT_UP)) {
+        menu->selected = (row > 0) ? row - 1 : ROW_COUNT - 1;
+        menu->last_step_ms = SDL_GetTicks();
+    }
+    if (nav_pressed(menu, input_mask, SIMCITY_INPUT_DOWN) ||
+        nav_repeats(menu, input_mask, SIMCITY_INPUT_DOWN)) {
+        menu->selected = (row + 1) % ROW_COUNT;
+        menu->last_step_ms = SDL_GetTicks();
+    }
+
+    /* Adjustments are edge-triggered: holding right must not run the value to
+       its limit in a single frame. */
+    if (nav_pressed(menu, input_mask, SIMCITY_INPUT_LEFT))
+        adjust_row(menu, menu->selected, -1);
+    if (nav_pressed(menu, input_mask, SIMCITY_INPUT_RIGHT))
+        adjust_row(menu, menu->selected, +1);
+
+    /* B is confirm, matching the guest, where B confirms and A cancels. */
+    if (nav_pressed(menu, input_mask, SIMCITY_INPUT_B)) {
+        switch ((RowId)menu->selected) {
+            case ROW_CHEATS:
+                menu->in_cheats = 1;
+                menu->cheat_selected = SIMCITY_CHEATS_BACK;
+                break;
+            case ROW_RESUME:
+                menu->open = 0;
+                menu->prev_input = 0;
+                return SIMCITY_MENU_ACTION_RESUME;
+            case ROW_QUIT:
+                menu->prev_input = 0;
+                return SIMCITY_MENU_ACTION_QUIT;
+            default:
+                break;   /* toggles act immediately on left/right */
+        }
+    }
+
+    menu->prev_input = input_mask;
     return SIMCITY_MENU_ACTION_NONE;
 }
 
@@ -178,11 +278,8 @@ static void value_text(const SimCityMenu *menu, int row, char *out, size_t cap)
         case ROW_MOUSE_SENS:
             snprintf(out, cap, "%d", c->mouse_sens);
             break;
-        case ROW_MONEY:
-            snprintf(out, cap, "%s", menu->money_applied ? "DONE" : "PRESS");
-            break;
-        case ROW_FREEZE_MONEY:
-            snprintf(out, cap, "%s", c->freeze_money ? "ON" : "OFF");
+        case ROW_CHEATS:
+            snprintf(out, cap, "%s", "ENTER");
             break;
         default:
             out[0] = '\0';
@@ -190,11 +287,81 @@ static void value_text(const SimCityMenu *menu, int row, char *out, size_t cap)
     }
 }
 
+static void draw_cheats(SimCityMenu *menu, int window_w, int window_h)
+{
+    static const char *const kCheatLabels[SIMCITY_CHEATS_COUNT] = {
+        "BACK", "ADD MONEY", "FREEZE MONEY"
+    };
+    static const SDL_Color kPanel = { 16, 16, 16, 236 };
+    static const SDL_Color kText  = { 250, 250, 250, 255 };
+    static const SDL_Color kValue = { 120, 200, 255, 255 };
+    static const SDL_Color kSelBg = { 40, 40, 40, 255 };
+
+    const int panel_h_base = 40 + SIMCITY_CHEATS_COUNT * 22 + 34;
+    int panel_w, panel_h, x0, y0, y, i, sc = 1;
+    char value[32];
+
+    sc = window_h / 200;
+    if (sc < 1) sc = 1;
+    if (sc > 4) sc = 4;
+    while (sc > 1 && (380 * sc > window_w - 20 ||
+                      panel_h_base * sc > window_h - 20)) {
+        sc--;
+    }
+
+    panel_w = 380 * sc;
+    panel_h = panel_h_base * sc;
+    x0 = (window_w - panel_w) / 2;
+    y0 = (window_h - panel_h) / 2;
+
+    simcity_gui_set_scale(&menu->gui, sc);
+    simcity_gui_set_colors(&menu->gui, kText, kPanel);
+    simcity_gui_fill_rect(&menu->gui, x0, y0, panel_w, panel_h);
+    simcity_gui_frame_rect(&menu->gui, x0, y0, panel_w, panel_h);
+
+    y = y0 + 14 * sc;
+    simcity_gui_text_centered(&menu->gui, window_w / 2, y, "CHEATS");
+    y += 22 * sc;
+
+    for (i = 0; i < SIMCITY_CHEATS_COUNT; ++i) {
+        int row_x = x0 + 14 * sc;
+        int row_w = panel_w - 28 * sc;
+        if (i == menu->cheat_selected) {
+            simcity_gui_set_colors(&menu->gui, kValue, kSelBg);
+            simcity_gui_fill_rect(&menu->gui, x0 + 8 * sc, y - 3 * sc,
+                                  panel_w - 16 * sc, 15);
+        } else {
+            simcity_gui_set_colors(&menu->gui, kText, kPanel);
+        }
+        simcity_gui_text(&menu->gui, row_x, y, kCheatLabels[i]);
+
+        value[0] = '\0';
+        switch ((SimCityCheatRow)i) {
+            case SIMCITY_CHEATS_MONEY:
+                snprintf(value, sizeof(value), "%s",
+                         menu->money_applied ? "DONE" : "PRESS B");
+                break;
+            case SIMCITY_CHEATS_FREEZE_MONEY:
+                snprintf(value, sizeof(value), "%s",
+                         menu->config->freeze_money ? "ON" : "OFF");
+                break;
+            default:
+                break;
+        }
+        if (value[0]) {
+            simcity_gui_text(&menu->gui,
+                             row_x + row_w - simcity_gui_text_width_scaled(value, sc),
+                             y, value);
+        }
+        y += 18 * sc;
+    }
+}
+
 void simcity_menu_draw(SimCityMenu *menu, int window_w, int window_h)
 {
     static const char *const kLabels[ROW_COUNT] = {
         "RESOLUTION", "WIDESCREEN", "SOFT MOUSE", "MOUSE SENS",
-        "MONEY", "FREEZE MONEY", "RESUME", "QUIT"
+        "CHEATS", "RESUME", "QUIT"
     };
     static const SDL_Color kPanel = { 16, 16, 16, 236 };
     static const SDL_Color kText  = { 250, 250, 250, 255 };
@@ -206,6 +373,7 @@ void simcity_menu_draw(SimCityMenu *menu, int window_w, int window_h)
     char value[32];
 
     if (!menu->open) return;
+    if (menu->in_cheats) { draw_cheats(menu, window_w, window_h); return; }
 
     /* The glyph grid is 5x7 pixels, so the panel is built at 1:1 and then
        scaled by an integer factor derived from the window. Without this the
