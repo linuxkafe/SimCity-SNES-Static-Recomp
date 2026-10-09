@@ -26,7 +26,7 @@ static SDL_Window *g_window = NULL;
 static SDL_Renderer *g_renderer = NULL;
 static SDL_Texture *g_texture = NULL;
 static SDL_GameController *g_gamepad = NULL;
-static SDL_mutex *g_audio_mutex = NULL;
+static SDL_AudioDeviceID g_audio_device = 0;
 static int g_running = 1;
 static uint32_t g_frame_count = 0;
 static int g_target_width = 512;
@@ -68,24 +68,37 @@ static const struct {
     { SDL_CONTROLLER_BUTTON_GUIDE,      SIMCITY_INPUT_START },  /* Steam button = Start */
 };
 
-static void audio_callback(void *userdata, Uint8 *stream, int len)
+/* PCM is handed to SDL from the main thread with SDL_QueueAudio instead of
+   being pulled by SDL's audio thread.  The core's ring buffer is written by
+   audio_sink() during simcity_recomp_advance() on the main thread; letting the
+   device thread read the same buffer without synchronisation was a data race,
+   and wrapping the whole frame advance in a lock would have blocked the device
+   thread for the length of a frame.  Queueing keeps one writer and one reader
+   on different objects. */
+static void pump_audio(void)
 {
-    (void)userdata;
-    SimCityRecomp *r = g_recomp;
-    if (!r) return;
+    int16_t chunk[2048 * SIMCITY_RECOMP_AUDIO_CHANNELS];
+    size_t avail, take;
 
-    size_t frames_avail = simcity_recomp_audio_available(r);
-    size_t frames_to_read = (size_t)len / (sizeof(int16_t) * 2);
-    if (frames_to_read > frames_avail) frames_to_read = frames_avail;
+    if (!g_audio_device || !g_recomp) return;
 
-    if (frames_to_read > 0) {
-        simcity_recomp_audio_read(r, (int16_t *)stream, frames_to_read);
+    while (SDL_GetQueuedAudioSize(g_audio_device) >
+           (Uint32)(4 * SIMCITY_RECOMP_AUDIO_CHANNELS * 2048)) {
+        if (!SDL_DequeueAudio(g_audio_device, chunk,
+                              sizeof(chunk) / sizeof(chunk[0])))
+            break;
     }
 
-    if ((size_t)len > frames_to_read * (sizeof(int16_t) * 2)) {
-        memset(stream + frames_to_read * (sizeof(int16_t) * 2), 0,
-               (size_t)len - frames_to_read * (sizeof(int16_t) * 2));
-    }
+    avail = simcity_recomp_audio_available(g_recomp);
+    take = avail < 2048u ? avail : 2048u;
+    if (take == 0u) return;
+
+    take = simcity_recomp_audio_read(g_recomp, chunk, take);
+    if (take == 0u) return;
+
+    SDL_QueueAudio(g_audio_device, chunk,
+                   (Uint32)(take * sizeof(int16_t) *
+                            SIMCITY_RECOMP_AUDIO_CHANNELS));
 }
 
 static int load_rom(const char *path, uint8_t **rom, size_t *rom_size)
@@ -137,12 +150,6 @@ static int init_sdl(void)
         return -1;
     }
 
-    g_audio_mutex = SDL_CreateMutex();
-    if (!g_audio_mutex) {
-        fprintf(stderr, "SDL_CreateMutex failed: %s\n", SDL_GetError());
-        return -1;
-    }
-
     g_window = SDL_CreateWindow("SimCity SNES Static Recomp",
                                  100, 100,
                                  g_target_width, g_target_height,
@@ -187,15 +194,21 @@ static int init_sdl(void)
     spec.freq = SIMCITY_RECOMP_HOST_AUDIO_SAMPLE_RATE;
     spec.format = AUDIO_S16SYS;
     spec.channels = 2;
-    spec.samples = 8192;  /* Larger buffer for Steam Deck to prevent underruns */
-    spec.callback = audio_callback;
+    /* Small device buffer.  The earlier 8192-frame buffer allowed the device
+       256 ms of slack, which is exactly the audible drag: SDL drains PCM in
+       real time, so a quarter-second backlog is permanent latency.  surplus PCM
+       is dropped after each frame (pump_audio) instead of accumulating. */
+    spec.samples = 512;
+    spec.callback = NULL;
 
-    if (SDL_OpenAudio(&spec, NULL) != 0) {
-        fprintf(stderr, "SDL_OpenAudio failed: %s\n", SDL_GetError());
+    g_audio_device = SDL_OpenAudioDevice(NULL, 0, &spec, NULL,
+                                         SDL_AUDIO_ALLOW_FREQUENCY_CHANGE);
+    if (!g_audio_device) {
+        fprintf(stderr, "SDL_OpenAudioDevice failed: %s\n", SDL_GetError());
         return -1;
     }
 
-    SDL_PauseAudio(0);
+    SDL_PauseAudioDevice(g_audio_device, 0);
 
     /* Initialize gamepad support for Steam Deck */
     if (SDL_NumJoysticks() > 0) {
@@ -233,7 +246,11 @@ static int advance_frame(uint16_t input_mask)
     SimCityRecompFrameResult result;
     SDL_zero(result);
 
-    int rc = simcity_recomp_advance(g_recomp, input_mask, 1, &result);
+    /* Advance without the expensive host frame conversion.  simcity_recomp_
+       advance() renders internally, and the previous code then called
+       simcity_recomp_render_current_frame() again, running the whole PPU scan
+       twice per frame.  render_frame() converts exactly once. */
+    int rc = simcity_recomp_advance_headless(g_recomp, input_mask, 1, &result);
     if (rc != 1) {
         fprintf(stderr, "simcity_recomp_advance failed: %s\n",
                 simcity_recomp_last_error(g_recomp));
@@ -241,17 +258,24 @@ static int advance_frame(uint16_t input_mask)
     }
 
     g_frame_count++;
-
-    if (result.frame_rendered) {
-        simcity_recomp_render_current_frame(g_recomp, NULL, 0);
-    }
+    (void)result;
 
     return 0;
 }
 
 static void render_frame(void)
 {
-    const uint32_t *bgra = simcity_recomp_frame_bgra(g_recomp);
+    const uint32_t *bgra;
+
+    /* advance_frame() used the headless route, so the host conversion into
+       simcity_recomp_frame_bgra() has not happened yet.  Do it once here. */
+    if (simcity_recomp_render_current_frame(g_recomp, NULL, 0) != 1) {
+        const char *err = simcity_recomp_last_error(g_recomp);
+        if (err && err[0] && g_frame_count % 60u == 0u)
+            fprintf(stderr, "render_current_frame: %s\n", err);
+    }
+
+    bgra = simcity_recomp_frame_bgra(g_recomp);
     if (!bgra) return;
 
     int tex_width = simcity_recomp_widescreen_enabled(g_recomp)
@@ -371,8 +395,20 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    Uint32 last_time = SDL_GetTicks();
-    const Uint32 FRAME_DELAY_MS = 16;
+    Uint64 next_deadline = SDL_GetPerformanceCounter();
+    const Uint64 perf_freq = SDL_GetPerformanceFrequency();
+    const double frame_hz = simcity_recomp_presentation_fps();
+    const Uint64 frame_period =
+        perf_freq ? (Uint64)((double)perf_freq / frame_hz + 0.5) : 16641u;
+    /* Keep the PCM backlog near two device buffers.  If emulation outruns the
+       device we drop surplus rather than let latency grow without bound. */
+    const size_t audio_high_water = 1024u;
+
+    /* Opt-in frame timing: SIMCITY_FPS=1 prints measured throughput so the
+       real frame budget can be verified on target hardware. */
+    const int report_fps = getenv("SIMCITY_FPS") != NULL;
+    Uint64 fps_window = next_deadline;
+    uint32_t fps_frames = 0u;
 
     while (g_running) {
         SDL_Event event;
@@ -385,6 +421,10 @@ int main(int argc, char **argv)
                     g_running = 0;
                 }
             }
+            if (event.type == SDL_CONTROLLERDEVICEADDED) {
+                if (!g_gamepad && event.cdevice.which < SDL_NumJoysticks())
+                    g_gamepad = SDL_GameControllerOpen(event.cdevice.which);
+            }
         }
 
         uint16_t input_mask = 0;
@@ -396,12 +436,34 @@ int main(int argc, char **argv)
 
         render_frame();
 
-        Uint32 now = SDL_GetTicks();
-        Uint32 elapsed = now - last_time;
-        if (elapsed < FRAME_DELAY_MS) {
-            SDL_Delay(FRAME_DELAY_MS - elapsed);
+        pump_audio();
+
+        if (simcity_recomp_audio_available(g_recomp) > audio_high_water)
+            simcity_recomp_audio_discard(g_recomp);
+
+        next_deadline += frame_period;
+        Uint64 now_perf = SDL_GetPerformanceCounter();
+        if (now_perf < next_deadline) {
+            Uint32 wait_ms = (Uint32)(((next_deadline - now_perf) * 1000u)
+                                      / (perf_freq ? perf_freq : 1000u));
+            if (wait_ms > 0u) SDL_Delay(wait_ms);
+        } else {
+            /* Behind schedule: resynchronise instead of accumulating debt. */
+            next_deadline = now_perf;
         }
-        last_time = SDL_GetTicks();
+
+        if (report_fps) {
+            fps_frames++;
+            Uint64 t = SDL_GetPerformanceCounter();
+            if (t - fps_window >= perf_freq) {
+                fprintf(stderr, "fps %.1f (%u frames)\n",
+                        (double)fps_frames * (double)perf_freq /
+                            (double)(t - fps_window),
+                        fps_frames);
+                fps_frames = 0u;
+                fps_window = t;
+            }
+        }
     }
 
     simcity_recomp_destroy(g_recomp);
@@ -416,9 +478,11 @@ int main(int argc, char **argv)
     SDL_DestroyRenderer(g_renderer);
     SDL_DestroyWindow(g_window);
     
-    if (g_audio_mutex) {
-        SDL_DestroyMutex(g_audio_mutex);
-        g_audio_mutex = NULL;
+    if (g_audio_device) {
+        SDL_PauseAudioDevice(g_audio_device, 1);
+        SDL_ClearQueuedAudio(g_audio_device);
+        SDL_CloseAudioDevice(g_audio_device);
+        g_audio_device = 0;
     }
     
     SDL_Quit();
