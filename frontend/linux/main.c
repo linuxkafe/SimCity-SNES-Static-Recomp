@@ -14,11 +14,12 @@ typedef struct {
     const char *name;
 } Resolution;
 
+/* Order must match the documented --resolution indices and the default. */
 static const Resolution RESOLUTIONS[] = {
+    { 512,  480,  "480p"  },  /* default / fallback */
     { 1280, 720,  "720p"  },
     { 1280, 800,  "800p"  },
     { 1920, 1080, "1080p" },
-    { 512,  480,  "480p"  },  /* default / fallback */
 };
 
 static SimCityRecomp *g_recomp = NULL;
@@ -27,6 +28,17 @@ static SDL_Renderer *g_renderer = NULL;
 static SDL_Texture *g_texture = NULL;
 static SDL_GameController *g_gamepad = NULL;
 static SDL_AudioDeviceID g_audio_device = 0;
+
+/* Soft mouse: maps the host pointer onto the guest's own d-pad cursor.
+   Position feedback is deliberately not used -- the core exposes cursor X
+   ($025D/$01EB) but no cursor Y, and guessing the Y address would drive the
+   cursor diagonally into map edges.  Rate mapping needs no guest state. */
+static int   g_soft_mouse = 0;
+static int   g_mouse_sens = 2;      /* texture px of motion needed per frame */
+static int   g_mouse_have = 0;      /* last pointer sample valid */
+static int   g_mouse_px = 0, g_mouse_py = 0;
+static int   g_mouse_dx = 0, g_mouse_dy = 0;   /* per-frame pointer delta */
+static int   g_size_explicit = 0;        /* --size overrides --resolution */
 static int g_running = 1;
 static uint32_t g_frame_count = 0;
 static int g_target_width = 512;
@@ -67,6 +79,46 @@ static const struct {
     { SDL_CONTROLLER_BUTTON_BACK,       SIMCITY_INPUT_SELECT },
     { SDL_CONTROLLER_BUTTON_GUIDE,      SIMCITY_INPUT_START },  /* Steam button = Start */
 };
+
+/* Sample the host pointer and turn per-frame motion into guest d-pad presses.
+   SDL_RenderCopy stretches the whole texture onto the whole window, so window
+   coordinates map linearly onto texture coordinates and the guest's own cursor
+   (d-pad driven) follows the pointer without any core knowledge. */
+static void soft_mouse_sample(void)
+{
+    int win_w = 0, win_h = 0, tex_w, tex_h;
+    int mx = 0, my = 0;
+    Uint32 buttons;
+
+    g_mouse_dx = 0;
+    g_mouse_dy = 0;
+    if (!g_soft_mouse || !g_window) return;
+
+    SDL_GetWindowSize(g_window, &win_w, &win_h);
+    if (win_w <= 0 || win_h <= 0) return;
+
+    buttons = SDL_GetMouseState(&mx, &my);
+    tex_w = simcity_recomp_widescreen_enabled(g_recomp)
+                ? SIMCITY_RECOMP_WIDESCREEN_WIDTH
+                : SIMCITY_RECOMP_FRAME_WIDTH;
+    tex_h = SIMCITY_RECOMP_FRAME_HEIGHT;
+
+    /* window -> texture, rounding toward the centre so the pointer stays put
+       when it is not moving */
+    int tx = (int)(((long)mx * tex_w + win_w / 2) / win_w);
+    int ty = (int)(((long)my * tex_h + win_h / 2) / win_h);
+    if (tx < 0) tx = 0; else if (tx >= tex_w) tx = tex_w - 1;
+    if (ty < 0) ty = 0; else if (ty >= tex_h) ty = tex_h - 1;
+
+    if (!g_mouse_have) {
+        g_mouse_px = tx; g_mouse_py = ty; g_mouse_have = 1;
+        (void)buttons;
+        return;
+    }
+    g_mouse_dx = tx - g_mouse_px;
+    g_mouse_dy = ty - g_mouse_py;
+    g_mouse_px = tx; g_mouse_py = ty;
+}
 
 /* PCM is handed to SDL from the main thread with SDL_QueueAudio instead of
    being pulled by SDL's audio thread.  The core's ring buffer is written by
@@ -210,6 +262,13 @@ static int init_sdl(void)
 
     SDL_PauseAudioDevice(g_audio_device, 0);
 
+    if (g_soft_mouse) {
+        /* The guest draws its own cursor; showing the host pointer as well
+           reads as two cursors fighting. */
+        SDL_ShowCursor(SDL_DISABLE);
+        SDL_SetRelativeMouseMode(SDL_FALSE);
+    }
+
     /* Initialize gamepad support for Steam Deck */
     if (SDL_NumJoysticks() > 0) {
         g_gamepad = SDL_GameControllerOpen(0);
@@ -237,6 +296,19 @@ static void handle_input(uint16_t *input_mask)
             if (SDL_GameControllerGetButton(g_gamepad, GAMEPADMAP[i].btn)) {
                 *input_mask |= GAMEPADMAP[i].mask;
             }
+        }
+    }
+
+    /* Soft mouse drives the guest cursor.  A real d-pad from keyboard or pad
+       always wins, so the two can never fight over the cursor. */
+    if (g_soft_mouse) {
+        uint16_t pad = SIMCITY_INPUT_UP | SIMCITY_INPUT_DOWN |
+                       SIMCITY_INPUT_LEFT | SIMCITY_INPUT_RIGHT;
+        if ((*input_mask & pad) == 0u) {
+            if (g_mouse_dx >= g_mouse_sens)       *input_mask |= SIMCITY_INPUT_RIGHT;
+            else if (g_mouse_dx <= -g_mouse_sens) *input_mask |= SIMCITY_INPUT_LEFT;
+            if (g_mouse_dy >= g_mouse_sens)       *input_mask |= SIMCITY_INPUT_DOWN;
+            else if (g_mouse_dy <= -g_mouse_sens) *input_mask |= SIMCITY_INPUT_UP;
         }
     }
 }
@@ -303,7 +375,10 @@ static void print_usage(const char *argv0)
     fprintf(stderr, "\nOptions:\n");
     fprintf(stderr, "  --rom <path>     Path to SimCity (USA).sfc ROM\n");
     fprintf(stderr, "  --resolution N   Resolution preset: 0=480p, 1=720p, 2=800p, 3=1080p (default: 0)\n");
+    fprintf(stderr, "  --size WxH       Arbitrary window size (overrides --resolution)\n");
     fprintf(stderr, "  --widescreen     Enable widescreen mode (398x239 core output)\n");
+    fprintf(stderr, "  --soft-mouse     Drive the guest d-pad cursor from the host pointer\n");
+    fprintf(stderr, "  --mouse-sens N   Soft-mouse sensitivity, texture px per frame (default 2)\n");
     fprintf(stderr, "  --help           Show this help\n");
     fprintf(stderr, "\nEnvironment variables:\n");
     fprintf(stderr, "  SIMCITY_ROM_PATH  ROM path (alternative to --rom)\n");
@@ -324,6 +399,22 @@ int main(int argc, char **argv)
                 fprintf(stderr, "Invalid resolution index. Use 0-3.\n");
                 return 1;
             }
+        } else if (strcmp(argv[i], "--size") == 0 && i + 1 < argc) {
+            int sw = 0, sh = 0;
+            if (sscanf(argv[++i], "%dx%d", &sw, &sh) == 2 && sw > 0 && sh > 0) {
+                g_target_width = sw;
+                g_target_height = sh;
+                g_size_explicit = 1;
+            } else {
+                fprintf(stderr, "Invalid --size, expected WxH (e.g. 1280x800)\n");
+                return 1;
+            }
+        } else if (strcmp(argv[i], "--soft-mouse") == 0) {
+            g_soft_mouse = 1;
+        } else if (strcmp(argv[i], "--mouse-sens") == 0 && i + 1 < argc) {
+            g_mouse_sens = atoi(argv[++i]);
+            if (g_mouse_sens < 1) g_mouse_sens = 1;
+            if (g_mouse_sens > 64) g_mouse_sens = 64;
         } else if (strcmp(argv[i], "--widescreen") == 0) {
             widescreen = 1;
         } else if (strcmp(argv[i], "--help") == 0) {
@@ -341,8 +432,10 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    g_target_width = RESOLUTIONS[resolution_idx].width;
-    g_target_height = RESOLUTIONS[resolution_idx].height;
+    if (!g_size_explicit) {
+        g_target_width = RESOLUTIONS[resolution_idx].width;
+        g_target_height = RESOLUTIONS[resolution_idx].height;
+    }
 
     uint8_t *rom = NULL;
     size_t rom_size = 0;
@@ -426,6 +519,8 @@ int main(int argc, char **argv)
                     g_gamepad = SDL_GameControllerOpen(event.cdevice.which);
             }
         }
+
+        soft_mouse_sample();
 
         uint16_t input_mask = 0;
         handle_input(&input_mask);
