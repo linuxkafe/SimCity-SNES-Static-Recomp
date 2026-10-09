@@ -282,7 +282,21 @@ static int init_sdl(void)
         return -1;
     }
 
-    g_renderer = SDL_CreateRenderer(g_window, -1, SDL_RENDERER_ACCELERATED);
+    /* Renderer selection: config file wins, then SDL_RENDER_DRIVER hint.
+       0 = auto (try accelerated, fallback to software)
+       1 = force software
+       2 = force accelerated (opengl) */
+    int want_accel = 0;
+    if (g_config.renderer == SIMCITY_RENDERER_SOFTWARE) {
+        want_accel = 0;
+    } else if (g_config.renderer == SIMCITY_RENDERER_OPENGL) {
+        want_accel = 1;
+    } else {  /* AUTO */
+        const char *hint = SDL_getenv("SDL_RENDER_DRIVER");
+        want_accel = (hint && SDL_strcasecmp(hint, "software") != 0);
+    }
+    Uint32 flags = want_accel ? SDL_RENDERER_ACCELERATED : SDL_RENDERER_SOFTWARE;
+    g_renderer = SDL_CreateRenderer(g_window, -1, flags);
     if (!g_renderer) {
         g_renderer = SDL_CreateRenderer(g_window, -1, SDL_RENDERER_SOFTWARE);
     }

@@ -14,6 +14,12 @@
 #define SIMCITY_MOUSE_SENS_MIN 1
 #define SIMCITY_MOUSE_SENS_MAX 64
 
+typedef enum {
+    SIMCITY_RENDERER_AUTO = 0,   /* try accelerated, fallback to software */
+    SIMCITY_RENDERER_SOFTWARE,
+    SIMCITY_RENDERER_OPENGL
+} SimCityRenderer;
+
 typedef struct {
     int width;
     int height;
@@ -21,6 +27,7 @@ typedef struct {
     int soft_mouse;
     int mouse_sens;
     int freeze_money;
+    int renderer;   /* SimCityRenderer */
 } SimCityLinuxConfig;
 
 void simcity_linux_config_defaults(SimCityLinuxConfig *config);

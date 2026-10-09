@@ -113,6 +113,10 @@ int simcity_settings_ini_load(const char *path, SimCityLinuxConfig *config)
                                             SIMCITY_MOUSE_SENS_MAX);
             else if (strcmp(line, "FreezeMoney") == 0)
                 config->freeze_money = value != 0;
+            else if (strcmp(line, "Renderer") == 0) {
+                int v = value;
+                if (v >= 0 && v <= 2) config->renderer = v;
+            }
         }
     }
     fclose(file);
@@ -127,7 +131,7 @@ int simcity_settings_ini_load(const char *path, SimCityLinuxConfig *config)
 static const char kBanner[] = "; SimCity SNES Static Recomp settings.\n";
 
 static const char *const owned_keys[] = {
-    "Width", "Height", "Widescreen", "SoftMouse", "MouseSens", "FreezeMoney"
+    "Width", "Height", "Widescreen", "SoftMouse", "MouseSens", "FreezeMoney", "Renderer"
 };
 #define SIMCITY_INI_OWNED_COUNT (sizeof(owned_keys) / sizeof(owned_keys[0]))
 
