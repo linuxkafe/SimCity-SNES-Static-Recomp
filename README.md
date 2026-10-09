@@ -93,6 +93,39 @@ holds the native 60.0988 Hz frame cadence at 1280x800 with widescreen on.
 | `--soft-mouse` | flag | off | Drive the guest d-pad cursor from the host pointer |
 | `--mouse-sens <N>` | 1-64 | 2 | Soft-mouse threshold, texture px per frame |
 
+### Settings menu
+
+Press **F1** in game to open the settings overlay. It is drawn on top of the
+game frame with a built-in 5x7 bitmap font, so the frontend needs no font
+library and no TTF file — only SDL2. Navigate with the arrow keys or the d-pad
+(including on Steam Deck): Left/Right changes a value, **B** activates.
+
+The menu **pauses the guest**: no frame advances and no audio drains while it
+is open. Advancing would spend money or scroll the city underneath the settings
+being changed.
+
+| Row | Effect |
+|-----|--------|
+| Resolution | 480p / 720p / 800p / 1080p, applied to the live window |
+| Widescreen | Toggles the 398x239 core output |
+| Soft mouse | Toggles pointer-driven cursor |
+| Mouse sens | 1-16, lower is more sensitive |
+| Money | One-shot: sets funds to 999999 |
+| Freeze money | Toggles topping funds up every frame |
+| Resume / Quit | — |
+
+Settings persist to `settings.ini` on exit and are read at startup. The file
+uses the same `[General]` section and key names the Windows launcher writes, so
+one file works on both frontends. Command-line options override the file.
+
+### Cheats
+
+Only cheat addresses verified against **this** core are offered. Funds sit at
+WRAM `$0B9D` as a 24-bit little-endian value; this was confirmed by reaching a
+live city and observing `$004E20`, the documented $20000 starting balance.
+Addresses used by other emulators for instant-build and disaster toggles were
+deliberately left out: they are unverified here and would silently do nothing.
+
 ### Pointer input
 
 `--soft-mouse` maps the host pointer onto the guest's own cursor by synthesising
