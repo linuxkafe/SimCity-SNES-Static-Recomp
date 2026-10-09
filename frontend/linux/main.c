@@ -439,7 +439,9 @@ static void render_frame(void)
     SDL_Rect dst = {0, 0, w, h};
     SDL_RenderCopy(g_renderer, g_texture, NULL, &dst);
 
-    SDL_RenderPresent(g_renderer);
+    /* Deliberately does NOT present. The menu path draws the overlay on top of
+       this same frame and must present once; presenting here as well showed
+       the game for one frame without the overlay, which read as flicker. */
 }
 
 static void print_usage(const char *argv0)
@@ -647,13 +649,14 @@ int main(int argc, char **argv)
                 apply_config_to_frontend();
                 simcity_settings_ini_save(g_settings_path, &g_config);
             }
-            SDL_RenderClear(g_renderer);
             render_frame();
             {
                 int mw = 0, mh = 0;
                 SDL_GetWindowSize(g_window, &mw, &mh);
                 simcity_menu_draw(&g_menu, mw, mh);
             }
+            /* Exactly one present per frame: the game image and the overlay
+               reach the display in the same swap. */
             SDL_RenderPresent(g_renderer);
             SDL_Delay(16);
             continue;
@@ -666,6 +669,10 @@ int main(int argc, char **argv)
         }
 
         render_frame();
+
+        /* render_frame() only draws into the back buffer; the game path is
+           the one caller with no overlay, so it presents here. */
+        SDL_RenderPresent(g_renderer);
 
         if (g_config.freeze_money)
             apply_money_cheat();
