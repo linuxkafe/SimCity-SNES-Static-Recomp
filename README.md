@@ -174,6 +174,15 @@ SDL_VIDEO_RENDERER=software ./simcity-linux --rom /path/to/rom.sfc
 | GCC / Clang | `gcc g++` | `gcc gcc-c++` | `gcc` | `gcc gcc-c++` |
 | SDL2 devel | `libsdl2-dev` | `SDL2-devel` | `sdl2` | `SDL2-devel` |
 
+`libsdl2-dev` is required, not optional: the Linux frontend is written against
+the SDL2 API and has no SDL3 or Vulkan path. Without it, CMake stops at
+configure time and names the package to install. To build only the portable
+core and the headless test, skip the frontend:
+
+```sh
+cmake -S . -B build -DBUILD_LINUX_FRONTEND=OFF
+```
+
 A ROM matching `ROM-REQUIREMENTS.txt` is needed at runtime but is **never**
 distributed with the build.
 
