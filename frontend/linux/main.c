@@ -506,8 +506,8 @@ static void print_usage(const char *argv0)
     fprintf(stderr, "  --widescreen     Enable widescreen mode (398x239 core output)\n");
     fprintf(stderr, "  --soft-mouse     Drive the guest d-pad cursor from the host pointer\n");
     fprintf(stderr, "  --mouse-sens N   Soft-mouse sensitivity, texture px per frame (default 2)\n");
-    fprintf(stderr, "  --swap-rb        Exchange red and blue when uploading the frame\n");
-    fprintf(stderr, "  --normal-colors  Upload the frame unchanged (the default)\n");
+    fprintf(stderr, "  --swap-rb        Exchange red and blue when uploading the frame (the default)\n");
+    fprintf(stderr, "  --normal-colors  Upload the frame unchanged\n");
     fprintf(stderr, "  --screenshot P   Write a PPM of the rendered frame to P after ~2s,\n");
     fprintf(stderr, "                   read back through the renderer (diagnostics)\n");
     fprintf(stderr, "  --help           Show this help\n");

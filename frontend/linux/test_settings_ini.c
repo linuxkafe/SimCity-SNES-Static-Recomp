@@ -86,8 +86,9 @@ int main(void)
        stack held.  A default that is not written down is not a default. */
     CHECK(config.renderer == (SimCityRenderer)SIMCITY_RENDERER_AUTO,
           "default renderer is AUTO");
-    CHECK((int)config.color_mode == (int)SIMCITY_COLOR_NORMAL,
-          "default colour mode is NORMAL");
+    /* SWAP_RB is the default: it is what reads correctly on the Steam Deck. */
+    CHECK((int)config.color_mode == (int)SIMCITY_COLOR_SWAP_RB,
+          "default colour mode is SWAP_RB");
 
     /* Round trip of our own keys. */
     config.width = 1024; config.height = 768;
@@ -137,10 +138,11 @@ int main(void)
             CHECK(loaded.freeze_money == (expect == 0 ? 1 : 0),
                   "ColorMode does not overwrite FreezeMoney");
         }
+        /* An unusable value must fall back to the default, which is SWAP_RB. */
         write_file(path, "[General]\nColorMode=7\n");
         CHECK(simcity_settings_ini_load(path, &loaded) == 1, "bad colormode loads");
-        CHECK((int)loaded.color_mode == (int)SIMCITY_COLOR_NORMAL,
-              "out-of-range ColorMode ignored");
+        CHECK((int)loaded.color_mode == (int)SIMCITY_COLOR_SWAP_RB,
+              "out-of-range ColorMode falls back to the default");
     }
 
     /* An out-of-range Renderer must not be adopted. */

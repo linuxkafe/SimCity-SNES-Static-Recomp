@@ -22,12 +22,16 @@ typedef enum {
 
 /* Channel order used when handing the frame to the renderer.
  *
- * NORMAL is correct: the core emits 0xAARRGGBB, which SDL_PIXELFORMAT_ARGB8888
- * takes verbatim, and this was measured to reproduce the core byte for byte on
- * the Deck's OpenGL renderer.  SWAP_RB is a diagnostic: on some desktop
- * compositors the picture has been reported with red and blue transposed, and
- * since that could not be reproduced from any automated capture, the setting
- * is exposed so it can be judged by eye on the affected setup. */
+ * The numeric values are written to settings.ini, so they must keep their
+ * meaning: 0 stays NORMAL and 1 stays SWAP_RB even though the default changed.
+ *
+ * SWAP_RB is the default because it is what the Deck actually needs: with it
+ * the controller logo and the in-game R/C/I read correctly on the machine this
+ * was verified on.  The frontend uploads 0xAARRGGBB through
+ * SDL_PIXELFORMAT_ARGB8888, which reproduces the core byte for byte in every
+ * automated check, so NORMAL is the nominal answer -- but on the reported
+ * hardware the presented picture is the one SWAP_RB produces, and that was
+ * confirmed by eye.  Leave the menu on NORMAL to go back to the raw order. */
 typedef enum {
     SIMCITY_COLOR_NORMAL = 0,
     SIMCITY_COLOR_SWAP_RB

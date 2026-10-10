@@ -241,16 +241,18 @@ SDL_VIDEODRIVER=dummy ./build/frontend/linux/simcity-linux --rom "/path/to/SimCi
 
 #### Colour order (menu setting)
 
-The frame is uploaded in its native channel order by default. If your display
-shows red and blue transposed, open the menu (F1) and set **COLOR** to
-`SWAP R/B`; leave it at `NORMAL` otherwise. The same thing from the command
-line is `--swap-rb` / `--normal-colors`, and the choice is stored in
-`settings.ini` as `ColorMode`.
+The default is `SWAP R/B`, which is what reads correctly on the Steam Deck: the
+controller logo shows A red and X blue, and the in-game R/C/I are right. Set
+**COLOR** to `NORMAL` in the menu to get the raw core channel order instead, or
+use `--swap-rb` / `--normal-colors`. The choice is stored in `settings.ini` as
+`ColorMode`.
 
-`NORMAL` is the verified-correct path: it reproduces the core byte for byte on
-the accelerated OpenGL renderer. `SWAP R/B` is a workaround for setups whose
-compositor transposes the picture; it exchanges the red and blue byte of every
-pixel on upload and leaves the rest of the pipeline untouched.
+The frontend uploads 0xAARRGGBB through `SDL_PIXELFORMAT_ARGB8888`, and every
+automated check says that reproduces the core byte for byte on the accelerated
+renderer, through Wayland, and through gamescope. `SWAP R/B` therefore compensates
+for something downstream of the renderer that those captures could not show; it
+exchanges the red and blue byte of every pixel at upload time and leaves the rest
+of the pipeline untouched.
 
 #### Colour check (channel order)
 
