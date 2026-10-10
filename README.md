@@ -95,7 +95,7 @@ holds the native 60.0988 Hz frame cadence at 1280x800 with widescreen on.
 
 ### Settings menu
 
-Press **F1** in game to open the settings overlay. It is drawn on top of the
+Press **F1**, or both stick clicks together, in game to open the settings overlay. It is drawn on top of the
 game frame with a built-in 5x7 bitmap font, so the frontend needs no font
 library and no TTF file — only SDL2. Navigate with the arrow keys or the d-pad
 (including on Steam Deck): Left/Right changes a value, **B** activates.
@@ -157,7 +157,13 @@ Keyboard controls:
 | Return | Start |
 | Backspace | Select |
 | Q | Y |
-| Escape | Close |
+| F1 | Toggle the settings menu |
+| Escape | Close the menu, or quit |
+
+On a Steam Deck both stick clicks together also toggle the settings menu, so it
+is reachable without a keyboard. The shortcut fires on the edge only, and it is
+checked before the game reads the pad, so pressing both sticks never also acts
+on the game.
 
 On systems where the renderer cannot access `/dev/dri/` directly (headless or
 unprivileged environments), force software rendering:
