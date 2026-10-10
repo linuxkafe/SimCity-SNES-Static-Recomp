@@ -192,6 +192,27 @@ cmake -S . -B build -DBUILD_LINUX_FRONTEND=OFF
 A ROM matching `ROM-REQUIREMENTS.txt` is needed at runtime but is **never**
 distributed with the build.
 
+
+## Installation (one command)
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/linuxkafe/SimCity-SNES-Static-Recomp/main/scripts/install-deck.sh | sh
+```
+
+The script:
+* downloads the pre‑built binary (verified with SHA‑256) from the GitHub release page,
+  falls back to building from source if the download fails,
+* installs any missing build dependencies (`base-devel cmake git pkgconf glibc linux-api-headers sdl2-compat`) on the Deck,
+* asks for the ROM path (`~/simcity-data/SimCity.sfc`),
+* compiles (or uses the pre‑built binary) and creates a `run.sh` launcher,
+* registers a Steam shortcut (F1 opens the settings overlay; **both stick clicks together** also open the menu),
+* creates a desktop entry for desktop mode.
+
+After the first run the **COLOR** menu item is set to `SWAP R/B` (the default that works on the Deck). Change it to `NORMAL` if your display shows the correct colours without swapping.
+
+The binary is **pre‑built and verified** – it contains no ROM data (verified by `scripts/verify-release.py`). If you prefer to build from source, run the installer with `--from-source` or compile manually as shown below.
+
+
 ### Steam Deck
 
 The static-recomp core compiles natively on the Steam Deck (x86_64, SteamOS
