@@ -48,6 +48,8 @@ static char g_settings_path[512] = "settings.ini";
 static int g_running = 1;
 static uint32_t g_frame_count = 0;
 /* Scratch buffer for the ColorMode = swap red/blue path; grown on demand. */
+/* Edge state for the both-sticks menu shortcut. */
+static int g_sticks_menu_held = 0;
 static uint32_t *g_swap_buffer = NULL;
 static uint32_t g_swap_capacity = 0u;
 static int g_target_width = 512;
@@ -511,6 +513,7 @@ static void print_usage(const char *argv0)
     fprintf(stderr, "  --help           Show this help\n");
     fprintf(stderr, "\nIn game:\n");
     fprintf(stderr, "  F1               Open/close the settings menu\n");
+    fprintf(stderr, "  Both sticks      Open/close the settings menu (Steam Deck)\n");
     fprintf(stderr, "  Escape           Close the menu, or quit when it is closed\n");
     fprintf(stderr, "\nEnvironment variables:\n");
     fprintf(stderr, "  SIMCITY_ROM_PATH  ROM path (alternative to --rom)\n");
@@ -685,6 +688,23 @@ int main(int argc, char **argv)
                 if (!g_gamepad && event.cdevice.which < SDL_NumJoysticks())
                     g_gamepad = SDL_GameControllerOpen(event.cdevice.which);
             }
+        }
+
+        /* Steam Deck shortcut: both stick clicks open the settings menu, so it
+           is reachable without a keyboard.  Checked before the game reads the
+           pad, and it is not added to input_mask, so pressing both sticks never
+           also acts on the guest.  Only the rising edge fires, which keeps the
+           menu from flickering while the sticks are held. */
+        if (g_gamepad) {
+            int both_sticks =
+                SDL_GameControllerGetButton(g_gamepad,
+                                            SDL_CONTROLLER_BUTTON_LEFTSTICK) &&
+                SDL_GameControllerGetButton(g_gamepad,
+                                            SDL_CONTROLLER_BUTTON_RIGHTSTICK);
+            if (both_sticks && !g_sticks_menu_held) {
+                simcity_menu_set_open(&g_menu, !simcity_menu_is_open(&g_menu));
+            }
+            g_sticks_menu_held = both_sticks;
         }
 
         uint16_t input_mask = 0;
