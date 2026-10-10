@@ -18,6 +18,7 @@ typedef enum {
     ROW_WIDESCREEN,
     ROW_SOFT_MOUSE,
     ROW_MOUSE_SENS,
+    ROW_COLOR,
     ROW_CHEATS,
     ROW_RESUME,
     ROW_QUIT,
@@ -111,6 +112,14 @@ static void adjust_row(SimCityMenu *menu, int row, int direction)
                 c->mouse_sens = SIMCITY_MOUSE_SENS_MIN;
             if (c->mouse_sens > SIMCITY_MOUSE_SENS_MAX)
                 c->mouse_sens = SIMCITY_MOUSE_SENS_MAX;
+            break;
+        case ROW_COLOR:
+            if (direction != 0) {
+                int next = c->color_mode + (direction > 0 ? 1 : -1);
+                if (next < SIMCITY_COLOR_NORMAL) next = SIMCITY_COLOR_SWAP_RB;
+                if (next > SIMCITY_COLOR_SWAP_RB) next = SIMCITY_COLOR_NORMAL;
+                c->color_mode = (SimCityColorMode)next;
+            }
             break;
         case ROW_CHEATS:
             break;   /* enters the submenu on B, not on left/right */
@@ -278,6 +287,10 @@ static void value_text(const SimCityMenu *menu, int row, char *out, size_t cap)
         case ROW_MOUSE_SENS:
             snprintf(out, cap, "%d", c->mouse_sens);
             break;
+        case ROW_COLOR:
+            snprintf(out, cap, "%s", c->color_mode == SIMCITY_COLOR_SWAP_RB
+                                       ? "SWAP R/B" : "NORMAL");
+            break;
         case ROW_CHEATS:
             snprintf(out, cap, "%s", "ENTER");
             break;
@@ -360,7 +373,7 @@ static void draw_cheats(SimCityMenu *menu, int window_w, int window_h)
 void simcity_menu_draw(SimCityMenu *menu, int window_w, int window_h)
 {
     static const char *const kLabels[ROW_COUNT] = {
-        "RESOLUTION", "WIDESCREEN", "SOFT MOUSE", "MOUSE SENS",
+        "RESOLUTION", "WIDESCREEN", "SOFT MOUSE", "MOUSE SENS", "COLOR",
         "CHEATS", "RESUME", "QUIT"
     };
     static const SDL_Color kPanel = { 16, 16, 16, 236 };

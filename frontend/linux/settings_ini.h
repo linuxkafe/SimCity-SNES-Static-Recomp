@@ -20,6 +20,19 @@ typedef enum {
     SIMCITY_RENDERER_OPENGL
 } SimCityRenderer;
 
+/* Channel order used when handing the frame to the renderer.
+ *
+ * NORMAL is correct: the core emits 0xAARRGGBB, which SDL_PIXELFORMAT_ARGB8888
+ * takes verbatim, and this was measured to reproduce the core byte for byte on
+ * the Deck's OpenGL renderer.  SWAP_RB is a diagnostic: on some desktop
+ * compositors the picture has been reported with red and blue transposed, and
+ * since that could not be reproduced from any automated capture, the setting
+ * is exposed so it can be judged by eye on the affected setup. */
+typedef enum {
+    SIMCITY_COLOR_NORMAL = 0,
+    SIMCITY_COLOR_SWAP_RB
+} SimCityColorMode;
+
 typedef struct {
     int width;
     int height;
@@ -28,6 +41,7 @@ typedef struct {
     int mouse_sens;
     int freeze_money;
     int renderer;   /* SimCityRenderer */
+    int color_mode; /* SimCityColorMode */
 } SimCityLinuxConfig;
 
 void simcity_linux_config_defaults(SimCityLinuxConfig *config);

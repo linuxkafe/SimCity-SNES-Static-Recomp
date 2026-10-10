@@ -28,6 +28,7 @@ void simcity_linux_config_defaults(SimCityLinuxConfig *config)
        set explicitly: renderer was left uninitialised, so a caller that never
        wrote the field got whatever the stack happened to hold. */
     config->renderer = SIMCITY_RENDERER_AUTO;
+    config->color_mode = SIMCITY_COLOR_NORMAL;
 }
 
 static void trim(char *s)
@@ -125,6 +126,10 @@ int simcity_settings_ini_load(const char *path, SimCityLinuxConfig *config)
                 if (value >= SIMCITY_RENDERER_AUTO && value <= SIMCITY_RENDERER_OPENGL)
                     config->renderer = (SimCityRenderer)value;
             }
+            else if (strcmp(line, "ColorMode") == 0 && in_general(section)) {
+                if (value >= SIMCITY_COLOR_NORMAL && value <= SIMCITY_COLOR_SWAP_RB)
+                    config->color_mode = (SimCityColorMode)value;
+            }
         }
     }
     fclose(file);
@@ -139,7 +144,8 @@ int simcity_settings_ini_load(const char *path, SimCityLinuxConfig *config)
 static const char kBanner[] = "; SimCity SNES Static Recomp settings.\n";
 
 static const char *const owned_keys[] = {
-    "Width", "Height", "Widescreen", "SoftMouse", "MouseSens", "FreezeMoney", "Renderer"
+    "Width", "Height", "Widescreen", "SoftMouse", "MouseSens", "FreezeMoney",
+    "Renderer", "ColorMode"
 };
 #define SIMCITY_INI_OWNED_COUNT (sizeof(owned_keys) / sizeof(owned_keys[0]))
 
@@ -173,6 +179,7 @@ static void format_owned_value(const SimCityLinuxConfig *config,
     else if (strcmp(name, "MouseSens") == 0)  snprintf(out, cap, "%d", config->mouse_sens);
     else if (strcmp(name, "FreezeMoney") == 0) snprintf(out, cap, "%d", config->freeze_money != 0);
     else if (strcmp(name, "Renderer") == 0)   snprintf(out, cap, "%d", (int)config->renderer);
+    else if (strcmp(name, "ColorMode") == 0)  snprintf(out, cap, "%d", (int)config->color_mode);
     else { snprintf(out, cap, "0"); return; }
 }
 
