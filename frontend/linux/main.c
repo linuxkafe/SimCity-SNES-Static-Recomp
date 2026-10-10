@@ -47,6 +47,9 @@ static SimCityLinuxConfig g_config;
 static char g_settings_path[512] = "settings.ini";
 static int g_running = 1;
 static uint32_t g_frame_count = 0;
+/* Scratch buffer for the ColorMode = swap red/blue path; grown on demand. */
+static uint32_t *g_swap_buffer = NULL;
+static uint32_t g_swap_capacity = 0u;
 static int g_target_width = 512;
 static int g_target_height = 480;
 
@@ -447,8 +450,35 @@ static void render_frame(void)
                         ? SIMCITY_RECOMP_WIDESCREEN_WIDTH
                         : SIMCITY_RECOMP_FRAME_WIDTH;
 
+    /* ColorMode.  NORMAL uploads the core's bytes untouched, which every
+       automated check agrees is correct.  SWAP_RB exchanges the red and blue
+       byte of each pixel into a scratch buffer first; it exists because a
+       transposed picture has been reported on the desktop compositor and
+       could not be reproduced or disproved from a captured frame, so the
+       choice is left to the player on the affected machine. */
+    if (g_config.color_mode == SIMCITY_COLOR_SWAP_RB) {
+        uint32_t n = (uint32_t)(tex_width * SIMCITY_RECOMP_FRAME_HEIGHT);
+        if (!g_swap_buffer || g_swap_capacity < n) {
+            SDL_free(g_swap_buffer);
+            g_swap_buffer = SDL_malloc(n * sizeof(uint32_t));
+            g_swap_capacity = g_swap_buffer ? n : 0u;
+        }
+        if (g_swap_buffer) {
+            for (uint32_t i = 0; i < n; ++i) {
+                uint32_t p = bgra[i];
+                g_swap_buffer[i] = (p & 0xFF00FF00u)
+                                 | ((p & 0x000000FFu) << 16)
+                                 | ((p & 0x00FF0000u) >> 16);
+            }
+            SDL_UpdateTexture(g_texture, NULL, g_swap_buffer,
+                              tex_width * sizeof(uint32_t));
+            goto uploaded;
+        }
+        fprintf(stderr, "colour swap: out of memory, using the normal order\n");
+    }
     SDL_UpdateTexture(g_texture, NULL, bgra,
                       tex_width * sizeof(uint32_t));
+uploaded:
 
     SDL_RenderClear(g_renderer);
 
@@ -474,6 +504,8 @@ static void print_usage(const char *argv0)
     fprintf(stderr, "  --widescreen     Enable widescreen mode (398x239 core output)\n");
     fprintf(stderr, "  --soft-mouse     Drive the guest d-pad cursor from the host pointer\n");
     fprintf(stderr, "  --mouse-sens N   Soft-mouse sensitivity, texture px per frame (default 2)\n");
+    fprintf(stderr, "  --swap-rb        Exchange red and blue when uploading the frame\n");
+    fprintf(stderr, "  --normal-colors  Upload the frame unchanged (the default)\n");
     fprintf(stderr, "  --screenshot P   Write a PPM of the rendered frame to P after ~2s,\n");
     fprintf(stderr, "                   read back through the renderer (diagnostics)\n");
     fprintf(stderr, "  --help           Show this help\n");
@@ -535,6 +567,10 @@ int main(int argc, char **argv)
         } else if (strcmp(argv[i], "--widescreen") == 0) {
             widescreen = 1;
             g_config.widescreen = 1;
+        } else if (strcmp(argv[i], "--swap-rb") == 0) {
+            g_config.color_mode = SIMCITY_COLOR_SWAP_RB;
+        } else if (strcmp(argv[i], "--normal-colors") == 0) {
+            g_config.color_mode = SIMCITY_COLOR_NORMAL;
         } else if (strcmp(argv[i], "--screenshot") == 0 && i + 1 < argc) {
             screenshot_path = argv[++i];
         } else if (strcmp(argv[i], "--help") == 0) {
@@ -802,6 +838,8 @@ int main(int argc, char **argv)
         g_gamepad = NULL;
     }
 
+    SDL_free(g_swap_buffer);
+    g_swap_buffer = NULL;
     SDL_DestroyTexture(g_texture);
     SDL_DestroyRenderer(g_renderer);
     SDL_DestroyWindow(g_window);

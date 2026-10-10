@@ -86,6 +86,8 @@ int main(void)
        stack held.  A default that is not written down is not a default. */
     CHECK(config.renderer == (SimCityRenderer)SIMCITY_RENDERER_AUTO,
           "default renderer is AUTO");
+    CHECK((int)config.color_mode == (int)SIMCITY_COLOR_NORMAL,
+          "default colour mode is NORMAL");
 
     /* Round trip of our own keys. */
     config.width = 1024; config.height = 768;
@@ -119,6 +121,26 @@ int main(void)
             CHECK(loaded.freeze_money == (expect % 2),
                   "FreezeMoney key is not overwritten by Renderer");
         }
+    }
+
+    /* ColorMode round trips, and an out-of-range value is ignored. */
+    {
+        SimCityLinuxConfig cm;
+        int expect;
+        for (expect = SIMCITY_COLOR_NORMAL; expect <= SIMCITY_COLOR_SWAP_RB; ++expect) {
+            simcity_linux_config_defaults(&cm);
+            cm.color_mode = (SimCityColorMode)expect;
+            cm.freeze_money = (expect == 0) ? 1 : 0;
+            CHECK(simcity_settings_ini_save(path, &cm) == 1, "colormode save succeeds");
+            CHECK(simcity_settings_ini_load(path, &loaded) == 1, "colormode load succeeds");
+            CHECK((int)loaded.color_mode == expect, "ColorMode round trips");
+            CHECK(loaded.freeze_money == (expect == 0 ? 1 : 0),
+                  "ColorMode does not overwrite FreezeMoney");
+        }
+        write_file(path, "[General]\nColorMode=7\n");
+        CHECK(simcity_settings_ini_load(path, &loaded) == 1, "bad colormode loads");
+        CHECK((int)loaded.color_mode == (int)SIMCITY_COLOR_NORMAL,
+              "out-of-range ColorMode ignored");
     }
 
     /* An out-of-range Renderer must not be adopted. */
@@ -199,6 +221,7 @@ int main(void)
     CHECK(count_occurrences(path, "SoftMouse=") == 1, "SoftMouse written once");
     CHECK(count_occurrences(path, "Renderer=") == 1, "Renderer written once");
     CHECK(count_occurrences(path, "FreezeMoney=") == 1, "FreezeMoney written once");
+    CHECK(count_occurrences(path, "ColorMode=") == 1, "ColorMode written once");
     CHECK(count_occurrences(path, "SimCity SNES Static Recomp settings.") == 1,
           "banner not stacked");
     CHECK(count_occurrences(path, "IntegerScale=1") == 1,
