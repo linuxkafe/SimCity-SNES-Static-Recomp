@@ -24,6 +24,10 @@ void simcity_linux_config_defaults(SimCityLinuxConfig *config)
     config->soft_mouse = 0;
     config->mouse_sens = 2;
     config->freeze_money = 0;
+    /* AUTO tries accelerated first and falls back to software.  This must be
+       set explicitly: renderer was left uninitialised, so a caller that never
+       wrote the field got whatever the stack happened to hold. */
+    config->renderer = SIMCITY_RENDERER_AUTO;
 }
 
 static void trim(char *s)
@@ -98,24 +102,28 @@ int simcity_settings_ini_load(const char *path, SimCityLinuxConfig *config)
             trim(value_text);
             value = (int)strtol(value_text, NULL, 10);
 
-            if (!in_general(section)) continue;
+            if (!in_general(section) && !in_display(section)) continue;
             if (strcmp(line, "Width") == 0)
                 config->width = clamp_int(value, SIMCITY_MIN_DIM, SIMCITY_MAX_DIM);
             else if (strcmp(line, "Height") == 0)
                 config->height = clamp_int(value, SIMCITY_MIN_DIM, SIMCITY_MAX_DIM);
+            /* Widescreen lives under [General] in Linux but under [Display] in
+               the Windows launcher; accept both. SoftMouse, MouseSens,
+               FreezeMoney and Renderer are Linux-only and live under
+               [General]. */
             else if (strcmp(line, "Widescreen") == 0 &&
                      (in_general(section) || in_display(section)))
                 config->widescreen = value != 0;
             else if (strcmp(line, "SoftMouse") == 0 && in_general(section))
                 config->soft_mouse = value != 0;
-            else if (strcmp(line, "MouseSens") == 0)
+            else if (strcmp(line, "MouseSens") == 0 && in_general(section))
                 config->mouse_sens = clamp_int(value, SIMCITY_MOUSE_SENS_MIN,
-                                            SIMCITY_MOUSE_SENS_MAX);
-            else if (strcmp(line, "FreezeMoney") == 0)
+                                               SIMCITY_MOUSE_SENS_MAX);
+            else if (strcmp(line, "FreezeMoney") == 0 && in_general(section))
                 config->freeze_money = value != 0;
-            else if (strcmp(line, "Renderer") == 0) {
-                int v = value;
-                if (v >= 0 && v <= 2) config->renderer = v;
+            else if (strcmp(line, "Renderer") == 0 && in_general(section)) {
+                if (value >= SIMCITY_RENDERER_AUTO && value <= SIMCITY_RENDERER_OPENGL)
+                    config->renderer = (SimCityRenderer)value;
             }
         }
     }
@@ -158,12 +166,14 @@ static int key_may_be_replaced(const char *name, int inside_general)
 static void format_owned_value(const SimCityLinuxConfig *config,
                                const char *name, char *out, size_t cap)
 {
-    if (strcmp(name, "Width") == 0)          snprintf(out, cap, "%d", config->width);
-    else if (strcmp(name, "Height") == 0)    snprintf(out, cap, "%d", config->height);
+    if (strcmp(name, "Width") == 0)           snprintf(out, cap, "%d", config->width);
+    else if (strcmp(name, "Height") == 0)     snprintf(out, cap, "%d", config->height);
     else if (strcmp(name, "Widescreen") == 0) snprintf(out, cap, "%d", config->widescreen != 0);
     else if (strcmp(name, "SoftMouse") == 0)  snprintf(out, cap, "%d", config->soft_mouse != 0);
     else if (strcmp(name, "MouseSens") == 0)  snprintf(out, cap, "%d", config->mouse_sens);
-    else                                      snprintf(out, cap, "%d", config->freeze_money != 0);
+    else if (strcmp(name, "FreezeMoney") == 0) snprintf(out, cap, "%d", config->freeze_money != 0);
+    else if (strcmp(name, "Renderer") == 0)   snprintf(out, cap, "%d", (int)config->renderer);
+    else { snprintf(out, cap, "0"); return; }
 }
 
 int simcity_settings_ini_save(const char *path, const SimCityLinuxConfig *config)

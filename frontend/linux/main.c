@@ -282,18 +282,17 @@ static int init_sdl(void)
         return -1;
     }
 
-    /* Renderer selection: config file wins, then SDL_RENDER_DRIVER hint.
-       0 = auto (try accelerated, fallback to software)
-       1 = force software
-       2 = force accelerated (opengl) */
-    int want_accel = 0;
+    /* Renderer selection: the config file wins, SDL_RENDER_DRIVER breaks a tie.
+       AUTO prefers accelerated and falls back to software, which is what the
+       user asked for: software is a safety net, not the default. */
+    int want_accel = 1;   /* AUTO: try accelerated first */
     if (g_config.renderer == SIMCITY_RENDERER_SOFTWARE) {
         want_accel = 0;
     } else if (g_config.renderer == SIMCITY_RENDERER_OPENGL) {
         want_accel = 1;
-    } else {  /* AUTO */
+    } else {
         const char *hint = SDL_getenv("SDL_RENDER_DRIVER");
-        want_accel = (hint && SDL_strcasecmp(hint, "software") != 0);
+        if (hint && SDL_strcasecmp(hint, "software") == 0) want_accel = 0;
     }
     Uint32 flags = want_accel ? SDL_RENDERER_ACCELERATED : SDL_RENDERER_SOFTWARE;
     g_renderer = SDL_CreateRenderer(g_window, -1, flags);
@@ -318,7 +317,14 @@ static int init_sdl(void)
      *   SDL_PIXELFORMAT_ARGB8888  R=0x00FF0000 G=0x0000FF00 B=0x000000FF
      *   SDL_PIXELFORMAT_ABGR8888  R=0x000000FF G=0x0000FF00 B=0x00FF0000
      * ABGR8888 therefore reads our blue byte as red and swaps the two
-     * channels. Verified against SDL_AllocFormat rather than by eye. */
+     * channels.
+     *
+     * This was measured, not reasoned: test_color_ground_truth.c uploads a real
+     * frame and compares the read-back against the core byte for byte. On this
+     * machine's OpenGL renderer, ARGB8888 and XRGB8888 both differ from the
+     * core in 0 pixels, while ABGR8888 differs in 8905 and reports a pure
+     * red/blue transposition. There is no driver bug to work around here; the
+     * earlier XRGB8888 switch was a change that cannot have helped. */
     g_texture = SDL_CreateTexture(g_renderer,
                                    SDL_PIXELFORMAT_ARGB8888,
                                    SDL_TEXTUREACCESS_STREAMING,
@@ -468,6 +474,8 @@ static void print_usage(const char *argv0)
     fprintf(stderr, "  --widescreen     Enable widescreen mode (398x239 core output)\n");
     fprintf(stderr, "  --soft-mouse     Drive the guest d-pad cursor from the host pointer\n");
     fprintf(stderr, "  --mouse-sens N   Soft-mouse sensitivity, texture px per frame (default 2)\n");
+    fprintf(stderr, "  --screenshot P   Write a PPM of the rendered frame to P after ~2s,\n");
+    fprintf(stderr, "                   read back through the renderer (diagnostics)\n");
     fprintf(stderr, "  --help           Show this help\n");
     fprintf(stderr, "\nIn game:\n");
     fprintf(stderr, "  F1               Open/close the settings menu\n");
@@ -492,6 +500,7 @@ int main(int argc, char **argv)
     g_target_width = g_config.width;
     g_target_height = g_config.height;
 
+    const char *screenshot_path = NULL;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--rom") == 0 && i + 1 < argc) {
             rom_path = argv[++i];
@@ -526,6 +535,8 @@ int main(int argc, char **argv)
         } else if (strcmp(argv[i], "--widescreen") == 0) {
             widescreen = 1;
             g_config.widescreen = 1;
+        } else if (strcmp(argv[i], "--screenshot") == 0 && i + 1 < argc) {
+            screenshot_path = argv[++i];
         } else if (strcmp(argv[i], "--help") == 0) {
             print_usage(argv[0]);
             return 0;
@@ -685,9 +696,69 @@ int main(int argc, char **argv)
         render_frame();
 
         /* render_frame() only draws into the back buffer; the game path is
-           the one caller with no overlay, so it presents here. */
-        SDL_RenderPresent(g_renderer);
+           the one caller with no overlay, so it presents here.
+           The screenshot is taken before the present: after SDL_RenderPresent
+           the back buffer contents are undefined, so reading them back can
+           return garbage or crash. */
+        /* Screenshot what the renderer actually produced, not the core's own
+           framebuffer: dumping simcity_recomp_frame_bgra() would prove the core
+           emits the right bytes and say nothing about the channel order the
+           display receives.  Reading back through the texture is the part that
+           can go wrong. */
+        if (screenshot_path && g_frame_count >= 120u) {
+            int sw = simcity_recomp_widescreen_enabled(g_recomp)
+                         ? SIMCITY_RECOMP_WIDESCREEN_WIDTH
+                         : SIMCITY_RECOMP_FRAME_WIDTH;
+            int sh = SIMCITY_RECOMP_FRAME_HEIGHT;
+            SDL_RendererInfo rinfo;
+            const char *rname = (SDL_GetRendererInfo(g_renderer, &rinfo) == 0)
+                                    ? rinfo.name : "unknown";
+            /* A NULL rect reads the whole render target, whose size is the
+               window's, not the core's.  Allocating for the core resolution
+               and then reading the window's pixels overflows the buffer, so
+               size the surface from what is actually there. */
+            int rw, rh;
+            SDL_GetRendererOutputSize(g_renderer, &rw, &rh);
+            SDL_Surface *shot = (rw > 0 && rh > 0)
+                ? SDL_CreateRGBSurfaceWithFormat(0, rw, rh, 32,
+                                                 SDL_PIXELFORMAT_ARGB8888)
+                : NULL;
+            sw = rw; sh = rh;
+            if (shot && SDL_RenderReadPixels(g_renderer, NULL,
+                                             SDL_PIXELFORMAT_ARGB8888,
+                                             shot->pixels, shot->pitch) == 0) {
+                FILE *f = fopen(screenshot_path, "wb");
+                if (f) {
+                    fprintf(f, "P6\n%d %d\n255\n", sw, sh);
+                    for (int y = 0; y < shot->h; ++y) {
+                        for (int x = 0; x < shot->w; ++x) {
+                            /* pitch is not necessarily w*4; index by row */
+                            Uint32 p = ((const Uint32 *)
+                                        ((const Uint8 *)shot->pixels
+                                         + y * shot->pitch))[x];
+                            unsigned char rgb[3];
+                            rgb[0] = (unsigned char)(p >> 16);
+                            rgb[1] = (unsigned char)(p >> 8);
+                            rgb[2] = (unsigned char)p;
+                            fwrite(rgb, 1, 3, f);
+                        }
+                    }
+                    fclose(f);
+                    fprintf(stderr,
+                            "screenshot saved to %s (%dx%d, read back through "
+                            "renderer %s)\n",
+                            screenshot_path, sw, sh, rname);
+                    screenshot_path = NULL;
+                }
+            } else {
+                fprintf(stderr, "screenshot failed: %s\n", SDL_GetError());
+                screenshot_path = NULL;
+            }
+            if (shot) SDL_FreeSurface(shot);
+        }
 
+
+        SDL_RenderPresent(g_renderer);
         if (g_config.freeze_money)
             apply_money_cheat();
 
