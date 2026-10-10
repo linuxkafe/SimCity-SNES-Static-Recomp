@@ -28,7 +28,10 @@ void simcity_linux_config_defaults(SimCityLinuxConfig *config)
        set explicitly: renderer was left uninitialised, so a caller that never
        wrote the field got whatever the stack happened to hold. */
     config->renderer = SIMCITY_RENDERER_AUTO;
-    config->color_mode = SIMCITY_COLOR_NORMAL;
+    /* SWAP_RB: confirmed correct by eye on the Steam Deck, where the raw
+       upload presents with red and blue transposed.  The numeric value is what
+       gets written to settings.ini, so it stays 1. */
+    config->color_mode = SIMCITY_COLOR_SWAP_RB;
 }
 
 static void trim(char *s)
