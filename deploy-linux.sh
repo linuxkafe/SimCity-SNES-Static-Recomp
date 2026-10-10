@@ -63,7 +63,7 @@ chmod +x "$STAGE_DIR/run.sh"
 
 echo
 echo "Staged: $STAGE_DIR/simcity-linux"
-"$STAGE_DIR/simcity-linux" --help 2>&1 | head -1
+"$STAGE_DIR/simcity-linux" --help > /dev/null 2>&1 || true
 
 if [ -n "$DECK_HOST" ]; then
     ssh "$DECK_HOST" "mkdir -p ~/simcity-build"

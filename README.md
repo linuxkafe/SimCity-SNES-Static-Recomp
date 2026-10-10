@@ -233,6 +233,28 @@ SDL_VIDEODRIVER=dummy ./build/frontend/linux/simcity-linux --rom "/path/to/SimCi
 # Gamepad connected: Steam Deck Controller
 ```
 
+#### Colour check (channel order)
+
+The frame is uploaded as `SDL_PIXELFORMAT_ARGB8888`, matching the core's
+`0xAARRGGBB` output. `ARGB8888` and `XRGB8888` were both measured on the OpenGL
+renderer and both reproduce the core byte for byte; `ABGR8888` transposes red
+and blue. If the picture looks wrong, run:
+
+```bash
+./build/frontend/linux/simcity-color-ground-truth "/path/to/SimCity (USA).sfc" exact
+```
+
+It re-derives the expected channel order from the SNES BGR555 hardware format
+rather than from the core's own output, so a swap inside the core cannot pass,
+then reads the frame back through the renderer and reports any pixel that
+differs. To capture what the renderer actually produced rather than the core's
+framebuffer:
+
+```bash
+./build/frontend/linux/simcity-linux --rom "/path/to/SimCity (USA).sfc" \
+  --screenshot /tmp/frame.ppm
+```
+
 Or use the headless test binary (no window, no audio):
 
 ```bash

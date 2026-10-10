@@ -90,4 +90,23 @@ if(SIMCITY_TEST_ROM)
         COMMAND simcity-frame-colors "${SIMCITY_TEST_ROM}")
     set_tests_properties(simcity-frame-colors PROPERTIES
         ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+
+    # Anchored colour check: derives the expected channel order from the SNES
+    # BGR555 spec instead of from the core's own framebuffer, so a swap inside
+    # the core cannot pass.  Runs under the dummy driver so it is meaningful in
+    # CI; the accelerated half is exercised by running this binary directly on
+    # the target, where "exact" makes the SDL half a hard requirement.
+    add_executable(simcity-color-ground-truth test_color_ground_truth.c)
+    target_link_libraries(simcity-color-ground-truth PRIVATE
+        simcity-static-recomp ${SDL2_LIBRARIES})
+    target_include_directories(simcity-color-ground-truth PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${CMAKE_SOURCE_DIR}/static-recomp/include"
+        ${SDL2_INCLUDE_DIRS})
+    target_compile_options(simcity-color-ground-truth PRIVATE
+        -Wall -Wextra -Wpedantic -Werror)
+    add_test(NAME simcity-color-ground-truth
+        COMMAND simcity-color-ground-truth "${SIMCITY_TEST_ROM}" exact)
+    set_tests_properties(simcity-color-ground-truth PROPERTIES
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy")
 endif()

@@ -15,7 +15,7 @@
 #define SIMCITY_MOUSE_SENS_MAX 64
 
 typedef enum {
-    SIMCITY_RENDERER_AUTO = 0,   /* try accelerated, fallback to software */
+    SIMCITY_RENDERER_AUTO = 0,       /* try accelerated, fallback to software */
     SIMCITY_RENDERER_SOFTWARE,
     SIMCITY_RENDERER_OPENGL
 } SimCityRenderer;
