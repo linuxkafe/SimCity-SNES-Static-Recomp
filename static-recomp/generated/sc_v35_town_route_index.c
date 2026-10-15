@@ -1,5 +1,6 @@
 /* AUTO-GENERATED bounded town-route dispatch index. */
 #include "sc_v11_runtime.h"
+#include "sc_simulation_profiler.h"
 int sc_v36_closure_guard_cpu_step(SCV11Runtime*,uint32_t,uint8_t,uint8_t,uint8_t);
 int sc_v35_group_00020(SCV11Runtime*,uint32_t,uint8_t,uint8_t,uint8_t);
 int sc_v35_group_00021(SCV11Runtime*,uint32_t,uint8_t,uint8_t,uint8_t);
@@ -102,6 +103,9 @@ int sc_v35_group_00167(SCV11Runtime*,uint32_t,uint8_t,uint8_t,uint8_t);
 
 int sc_v35_town_route_cpu_step(SCV11Runtime *r,uint32_t address,uint8_t m,uint8_t x,uint8_t e){
   int result;
+  uint32_t group_id = group_id_from_address(address);
+  uint32_t cycles_before = r->scheduler.cpu_instructions;
+  sc_sim_profiler_record_entry(group_id, address);
   switch(address>>10u){
   case 0x20u: result=sc_v35_group_00020(r,address,m,x,e); break;
   case 0x21u: result=sc_v35_group_00021(r,address,m,x,e); break;
@@ -203,6 +207,10 @@ int sc_v35_town_route_cpu_step(SCV11Runtime *r,uint32_t address,uint8_t m,uint8_
   case 0x167u: result=sc_v35_group_00167(r,address,m,x,e); break;
   default: result=-1; break;
   }
-  if(result>=0)return result;
+  if(result>=0){
+    uint32_t cycles_after = r->scheduler.cpu_instructions;
+    sc_sim_profiler_record_exit(group_id, cycles_after - cycles_before);
+    return result;
+  }
   return sc_v36_closure_guard_cpu_step(r,address,m,x,e);
 }

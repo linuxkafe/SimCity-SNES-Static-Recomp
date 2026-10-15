@@ -52,6 +52,30 @@ target_compile_options(headless-test PRIVATE
 target_compile_definitions(headless-test PRIVATE
     SIMCITY_PLATFORM_LINUX
 )
+
+# Headless profiler — identifies v35 town route hot paths for native reimpl
+add_executable(headless-profile
+    headless-profile.c
+)
+
+target_include_directories(headless-profile PRIVATE
+    "${CMAKE_SOURCE_DIR}/static-recomp/include"
+    "${CMAKE_SOURCE_DIR}/static-recomp/internal/include"
+    "${CMAKE_SOURCE_DIR}/static-recomp/generated"
+)
+
+target_link_libraries(headless-profile PRIVATE
+    simcity-static-recomp
+)
+
+target_compile_options(headless-profile PRIVATE
+    -Wall -Wextra -Wpedantic -Wno-format -Wno-unused-variable
+)
+
+target_compile_definitions(headless-profile PRIVATE
+    SIMCITY_PLATFORM_LINUX
+)
+
 # Settings persistence: guards the shared settings.ini contract, in particular
 # that a Linux run does not delete keys owned by the Windows launcher.
 add_executable(simcity-settings-ini test_settings_ini.c settings_ini.c)
