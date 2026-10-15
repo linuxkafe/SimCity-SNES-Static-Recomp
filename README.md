@@ -118,6 +118,11 @@ Settings persist to `settings.ini` on exit and are read at startup. The file
 uses the same `[General]` section and key names the Windows launcher writes, so
 one file works on both frontends. Command-line options override the file.
 
+### Settings overlay (F1)
+
+The overlay now occupies the full window area instead of only the bottom‑right
+corner. Navigation remains with arrow keys / d‑pad; **B** activates a row.
+
 ### Cheats
 
 Only cheat addresses verified against **this** core are offered. Funds sit at
@@ -125,6 +130,8 @@ WRAM `$0B9D` as a 24-bit little-endian value; this was confirmed by reaching a
 live city and observing `$004E20`, the documented $20000 starting balance.
 Addresses used by other emulators for instant-build and disaster toggles were
 deliberately left out: they are unverified here and would silently do nothing.
+
+**Known issue:** the money cheat (F1 → Money) does not take effect in the current build; investigation in progress.
 
 ### Pointer input
 
@@ -353,6 +360,8 @@ Frame budget on the Steam Deck is 16.641 ms (60.0988 Hz NTSC). Measured with
 | `-O0` build, frame rendered twice | ~105 ms | ~10 fps |
 | `-O3` Release, frame rendered twice | ~34 ms | ~29 fps |
 | `-O3` Release, single render (current) | ~15.4 ms | **57.4 fps avg** |
+| `-O3` Release, emulation‑only + frame‑cache (title/menu) | ~13 ms | **≈77 fps** |
+| `-O3` Release, full frame after city load (map scroll) | ~30‑35 ms | **≈30 fps** |
 
 Frame work is 15.4 ms inside a 16.641 ms budget, leaving ~1.2 ms of slack.
 `SDL_Delay` has roughly millisecond granularity and tends to overshoot, so the
