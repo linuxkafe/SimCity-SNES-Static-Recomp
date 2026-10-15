@@ -42,9 +42,13 @@ struct SimCityRecomp {
      uint32_t input_history_capacity;
      uint8_t replaying_snapshot;
      uint8_t initialized;
-     uint32_t last_render_hash;
-     uint8_t last_render_valid;
- };
+uint32_t last_render_hash;
+      uint8_t last_render_valid;
+      uint32_t last_render_hash_no_scroll;
+      int16_t last_scroll_x;
+      int16_t last_scroll_y;
+      uint8_t last_scroll_valid;
+  };
 
 static void copy_text(char *destination, size_t capacity, const char *source);
 
@@ -457,28 +461,107 @@ static void audio_sink(void *context, int16_t left, int16_t right) {
     instance->audio_available_frames++;
 }
  
- static uint32_t snapshot_hash_bytes(uint32_t h, const void *data, size_t size);
- 
- static int render_current_frame(SimCityRecomp *instance, char *error,
+static uint32_t snapshot_hash_bytes(uint32_t h, const void *data, size_t size);
+
+static void shift_framebuffer(uint32_t *buf, unsigned width, unsigned height,
+                              int16_t dx, int16_t dy) {
+    if (dx == 0 && dy == 0) return;
+    if (dy > 0) {
+        for (int y = (int)height - 1; y >= dy; --y) {
+            memmove(&buf[y * width], &buf[(y - dy) * width],
+                    width * sizeof(uint32_t));
+        }
+        for (int y = 0; y < dy; ++y) {
+            memset(&buf[y * width], 0, width * sizeof(uint32_t));
+        }
+    } else if (dy < 0) {
+        int ady = -dy;
+        for (int y = 0; y + ady < (int)height; ++y) {
+            memmove(&buf[y * width], &buf[(y + ady) * width],
+                    width * sizeof(uint32_t));
+        }
+        for (int y = height - ady; y < (int)height; ++y) {
+            memset(&buf[y * width], 0, width * sizeof(uint32_t));
+        }
+    }
+    if (dx > 0) {
+        for (int y = 0; y < (int)height; ++y) {
+            memmove(&buf[y * width + dx], &buf[y * width],
+                    (width - dx) * sizeof(uint32_t));
+            memset(&buf[y * width], 0, dx * sizeof(uint32_t));
+        }
+    } else if (dx < 0) {
+        int adx = -dx;
+        for (int y = 0; y < (int)height; ++y) {
+            memmove(&buf[y * width], &buf[y * width + adx],
+                    (width - adx) * sizeof(uint32_t));
+            memset(&buf[y * width + width - adx], 0,
+                   adx * sizeof(uint32_t));
+        }
+    }
+}
+
+static int render_current_frame(SimCityRecomp *instance, char *error,
                                 size_t error_capacity) {
     unsigned width = instance->widescreen ? SIMCITY_RECOMP_WIDESCREEN_WIDTH :
                                             SIMCITY_RECOMP_FRAME_WIDTH;
     unsigned margin = instance->widescreen ? SIMCITY_RECOMP_WIDESCREEN_MARGIN : 0u;
     SCV11Runtime *rt = instance->runtime;
     SCMachine *m = &rt->machine;
-    uint32_t h = 2166136261u;
-    h = snapshot_hash_bytes(h, m->vram, sizeof(m->vram));
-    h = snapshot_hash_bytes(h, m->cgram, sizeof(m->cgram));
-    h = snapshot_hash_bytes(h, m->oam, sizeof(m->oam));
+    uint32_t h_full = 2166136261u;
+    uint32_t h_no_scroll = 2166136261u;
+    h_full = snapshot_hash_bytes(h_full, m->vram, sizeof(m->vram));
+    h_full = snapshot_hash_bytes(h_full, m->cgram, sizeof(m->cgram));
+    h_full = snapshot_hash_bytes(h_full, m->oam, sizeof(m->oam));
+    h_no_scroll = snapshot_hash_bytes(h_no_scroll, m->vram, sizeof(m->vram));
+    h_no_scroll = snapshot_hash_bytes(h_no_scroll, m->cgram, sizeof(m->cgram));
+    h_no_scroll = snapshot_hash_bytes(h_no_scroll, m->oam, sizeof(m->oam));
     for (int i = 0x100; i < 0x200; ++i) {
-        h = snapshot_hash_bytes(h, &m->mmio[i], 1);
+        h_full = snapshot_hash_bytes(h_full, &m->mmio[i], 1);
+        /* scroll registers 0x210D-0x2114 (BG1-4 HOFS/VOFS) are excluded
+           from the no‑scroll hash so that pure camera movement can be
+           detected cheaply. */
+        if (i < 0x210D || i > 0x2114) {
+            h_no_scroll = snapshot_hash_bytes(h_no_scroll, &m->mmio[i], 1);
+        }
     }
-    h = snapshot_hash_bytes(h, &m->ppu_brightness, 1);
-    h = snapshot_hash_bytes(h, &m->ppu_forced_blank, 1);
-    if (instance->last_render_valid && instance->last_render_hash == h) {
+    h_full = snapshot_hash_bytes(h_full, &m->ppu_brightness, 1);
+    h_full = snapshot_hash_bytes(h_full, &m->ppu_forced_blank, 1);
+    h_no_scroll = snapshot_hash_bytes(h_no_scroll, &m->ppu_brightness, 1);
+    h_no_scroll = snapshot_hash_bytes(h_no_scroll, &m->ppu_forced_blank, 1);
+
+    /* Fast path: completely identical state -> nothing to do. */
+    if (instance->last_render_valid && instance->last_render_hash == h_full) {
         return 1;
     }
-    instance->last_render_hash = h;
+
+    /* Extract current BG1 scroll (used as proxy for camera). */
+    int16_t scroll_x = (int16_t)m->mmio[0x210D];
+    int16_t scroll_y = (int16_t)m->mmio[0x210E];
+
+    /* Scroll‑only fast path: only the scroll registers changed. */
+    if (instance->last_scroll_valid &&
+        instance->last_render_hash_no_scroll == h_no_scroll) {
+        int16_t dx = scroll_x - instance->last_scroll_x;
+        int16_t dy = scroll_y - instance->last_scroll_y;
+        if (dx != 0 || dy != 0) {
+            shift_framebuffer(instance->bgra, width,
+                              SIMCITY_RECOMP_FRAME_HEIGHT, dx, dy);
+        }
+        instance->last_scroll_x = scroll_x;
+        instance->last_scroll_y = scroll_y;
+        instance->last_render_hash = h_full;
+        instance->last_render_hash_no_scroll = h_no_scroll;
+        instance->last_render_valid = 1;
+        return 1;
+    }
+
+    /* Full render required. */
+    instance->last_render_hash = h_full;
+    instance->last_render_hash_no_scroll = h_no_scroll;
+    instance->last_scroll_x = scroll_x;
+    instance->last_scroll_y = scroll_y;
+    instance->last_scroll_valid = 1;
     instance->last_render_valid = 1;
     memset(&instance->video, 0, sizeof(instance->video));
     if (!sc_v28_render_first_visible_frame(rt,
