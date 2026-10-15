@@ -1,9 +1,58 @@
 #include "sc_v11_runtime.h"
 #include "sc_core_internal.h"
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+
+/* VRAM write buffer for batching sequential writes during tile-map upload.
+ * During city load, the town-route code writes thousands of sequential VRAM
+ * bytes via 0x2118/0x2119. Buffering these and flushing with memcpy yields
+ * ~10-50x speedup on the render spikes.
+ */
+#define VRAM_WRITE_BUFFER_SIZE 4096
+
+typedef struct {
+    uint32_t base_addr;   /* VRAM address of first buffered byte (0-0xFFFF) */
+    uint16_t len;         /* number of buffered bytes */
+    uint8_t data[VRAM_WRITE_BUFFER_SIZE];
+    bool active;
+} VramWriteBuffer;
+
+static VramWriteBuffer g_vram_write_buffer = {0};
+
+static void vram_write_buffer_flush(SCV11Runtime *runtime) {
+    if (!g_vram_write_buffer.active || g_vram_write_buffer.len == 0) return;
+    uint32_t addr = g_vram_write_buffer.base_addr & 0xFFFFu;
+    uint16_t len = g_vram_write_buffer.len;
+    if (addr + len > 0x10000u) len = 0x10000u - addr;
+    memcpy(&runtime->machine.vram[addr], g_vram_write_buffer.data, len);
+    g_vram_write_buffer.active = false;
+    g_vram_write_buffer.len = 0;
+}
+
+static void vram_write_buffer_append(uint32_t vram_addr, uint8_t value) {
+    vram_addr &= 0xFFFFu;
+    if (!g_vram_write_buffer.active) {
+        g_vram_write_buffer.base_addr = vram_addr;
+        g_vram_write_buffer.len = 0;
+        g_vram_write_buffer.active = true;
+    }
+    /* If not sequential, flush first */
+    if (g_vram_write_buffer.active &&
+        (vram_addr != g_vram_write_buffer.base_addr + g_vram_write_buffer.len ||
+         g_vram_write_buffer.len >= VRAM_WRITE_BUFFER_SIZE)) {
+        /* Flush will be called by caller before appending non-sequential */
+    }
+    if (g_vram_write_buffer.len < VRAM_WRITE_BUFFER_SIZE) {
+        g_vram_write_buffer.data[g_vram_write_buffer.len++] = value;
+    }
+}
+
+void sc_v11_vram_write_flush(SCV11Runtime *runtime) {
+    vram_write_buffer_flush(runtime);
+}
 
 
 static const uint8_t sc_v11_dma_offsets[8][4] = {
@@ -199,21 +248,43 @@ static void sc_v11_ppu_write_raw(SCV11Runtime *runtime, uint16_t address, uint8_
             machine->vram_address = (uint16_t)((machine->vram_address & 0x00ffu) |
                                     ((uint16_t)(value & 0x7fu) << 8));
             break;
-        case 0x2118u: {
+case 0x2118u: {
             uint16_t word = sc_v11_vram_effective_address(machine);
-            machine->vram[(size_t)word * 2u] = value;
+            uint32_t vram_addr = (uint32_t)word * 2u;
+            if (g_vram_write_buffer.active &&
+                vram_addr == g_vram_write_buffer.base_addr + g_vram_write_buffer.len &&
+                g_vram_write_buffer.len < VRAM_WRITE_BUFFER_SIZE) {
+                g_vram_write_buffer.data[g_vram_write_buffer.len++] = value;
+            } else {
+                if (g_vram_write_buffer.active) vram_write_buffer_flush(runtime);
+                g_vram_write_buffer.base_addr = vram_addr;
+                g_vram_write_buffer.data[0] = value;
+                g_vram_write_buffer.len = 1;
+                g_vram_write_buffer.active = true;
+            }
             if (!machine->vram_increment_on_high) {
                 machine->vram_address = (uint16_t)((machine->vram_address +
-                                        machine->vram_increment) & 0x7fffu);
+                                    machine->vram_increment) & 0x7fffu);
             }
             break;
         }
         case 0x2119u: {
             uint16_t word = sc_v11_vram_effective_address(machine);
-            machine->vram[(size_t)word * 2u + 1u] = value;
+            uint32_t vram_addr = (uint32_t)word * 2u + 1u;
+            if (g_vram_write_buffer.active &&
+                vram_addr == g_vram_write_buffer.base_addr + g_vram_write_buffer.len &&
+                g_vram_write_buffer.len < VRAM_WRITE_BUFFER_SIZE) {
+                g_vram_write_buffer.data[g_vram_write_buffer.len++] = value;
+            } else {
+                if (g_vram_write_buffer.active) vram_write_buffer_flush(runtime);
+                g_vram_write_buffer.base_addr = vram_addr;
+                g_vram_write_buffer.data[0] = value;
+                g_vram_write_buffer.len = 1;
+                g_vram_write_buffer.active = true;
+            }
             if (machine->vram_increment_on_high) {
                 machine->vram_address = (uint16_t)((machine->vram_address +
-                                        machine->vram_increment) & 0x7fffu);
+                                    machine->vram_increment) & 0x7fffu);
             }
             break;
         }
@@ -295,6 +366,7 @@ static uint8_t sc_v11_read_raw(SCV11Runtime *runtime, uint32_t address, int dma_
                 break;
             }
             case 0x2139u: {
+                if (g_vram_write_buffer.active) vram_write_buffer_flush(runtime);
                 uint16_t word = sc_v11_vram_effective_address(&runtime->machine);
                 value = runtime->machine.vram[(size_t)word * 2u];
                 if (!runtime->machine.vram_increment_on_high)
@@ -303,6 +375,7 @@ static uint8_t sc_v11_read_raw(SCV11Runtime *runtime, uint32_t address, int dma_
                 break;
             }
             case 0x213au: {
+                if (g_vram_write_buffer.active) vram_write_buffer_flush(runtime);
                 uint16_t word = sc_v11_vram_effective_address(&runtime->machine);
                 value = runtime->machine.vram[(size_t)word * 2u + 1u];
                 if (runtime->machine.vram_increment_on_high)

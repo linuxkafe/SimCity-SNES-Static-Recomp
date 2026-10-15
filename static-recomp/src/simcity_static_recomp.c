@@ -799,6 +799,7 @@ static int advance_internal(SimCityRecomp *instance,
             if (instance->runtime->scheduler.frame != guarded_frame) {
                 guarded_frame = instance->runtime->scheduler.frame;
                 apply_widescreen_cursor_connector(instance, input_mask);
+                sc_v11_vram_write_flush(instance->runtime);
                 guard = SIMCITY_FRAME_INSTRUCTION_GUARD;
             }
         }
@@ -828,6 +829,8 @@ static int advance_internal(SimCityRecomp *instance,
         if (result) *result = local;
         return 0;
     }
+
+    sc_v11_vram_write_flush(instance->runtime);
 
     if (render_frame) {
         memset(&instance->video, 0, sizeof(instance->video));
