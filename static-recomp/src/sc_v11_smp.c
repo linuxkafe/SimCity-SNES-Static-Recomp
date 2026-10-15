@@ -151,28 +151,40 @@ void sc_v11_smp_power_on(SCV11Runtime *runtime) {
     sc_static_apu_reset();
     (void)set_engine_callbacks(runtime);
 }
+static void sync_smp_status_cached(SCV11Runtime *runtime, SCStaticApuStatus *s) {
+    if (!sc_static_apu_status(s)) return;
+    runtime->scheduler.smp_instructions = s->smp_instructions;
+    runtime->smp_core.cycle = s->smp_cycles;
+    runtime->smp_core.instructions = s->smp_instructions;
+    runtime->smp_core.validated_instructions = s->aot_validated_instructions;
+    runtime->smp_core.code_write_barriers = s->code_write_barriers;
+    runtime->smp_core.current_epoch = s->current_epoch;
+    runtime->smp_core.failed = s->aot_failed;
+    runtime->machine.smp.pc = s->smp_pc;
+    runtime->machine.smp.ipl_rom_active = (uint8_t)(s->current_epoch == 0u);
+    runtime->audio_epoch_trace.current_epoch = s->current_epoch;
+    if (s->current_epoch != SC_AUDIO_EPOCH_IPL &&
+        !sc_audio_epoch_descriptor(s->current_epoch)) {
+        runtime->audio_epoch_trace.unknown_epoch_barriers++;
+    }
+}
+
 int sc_v11_smp_sync_to_master(SCV11Runtime *runtime,uint64_t master_clock){
     char error[256];
     SCStaticApuStatus s;
     if(!runtime||runtime->route_failed)return 0;
     if(!sc_static_apu_sync_to_master(master_clock,error,sizeof(error)))
         return audio_fail(runtime,error);
-    if(sc_static_apu_status(&s)){
-        runtime->scheduler.smp_instructions=s.smp_instructions;
-        runtime->smp_core.cycle=s.smp_cycles;
-        runtime->smp_core.instructions=s.smp_instructions;
-        runtime->smp_core.validated_instructions=s.aot_validated_instructions;
-        runtime->smp_core.code_write_barriers=s.code_write_barriers;
-        runtime->smp_core.current_epoch=s.current_epoch;
-        runtime->smp_core.failed=s.aot_failed;
-        runtime->machine.smp.pc=s.smp_pc;
-        runtime->machine.smp.ipl_rom_active=(uint8_t)(s.current_epoch==0u);
-        runtime->audio_epoch_trace.current_epoch=s.current_epoch;
-        if(s.current_epoch!=SC_AUDIO_EPOCH_IPL &&
-           !sc_audio_epoch_descriptor(s.current_epoch)){
-            runtime->audio_epoch_trace.unknown_epoch_barriers++;
-            return audio_fail(runtime,"unknown Full Static audio epoch");
-        }
+    uint8_t epoch = runtime->smp_core.current_epoch;
+    static uint64_t last_full_sync_frame = 0;
+    if (epoch != SC_AUDIO_EPOCH_IPL || 
+        runtime->scheduler.frame != last_full_sync_frame) {
+        sync_smp_status_cached(runtime, &s);
+        last_full_sync_frame = runtime->scheduler.frame;
+    } else {
+        uint64_t smp_instr = 0;
+        if (sc_static_apu_status(&s)) smp_instr = s.smp_instructions;
+        runtime->scheduler.smp_instructions = smp_instr;
     }
     return 1;
 }

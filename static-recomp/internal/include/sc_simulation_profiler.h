@@ -10,9 +10,9 @@
 
 #include <stdint.h>
 
-/* Max group_id returned by group_id_from_address() is 0x60 (0x51+0x0F);
+/* group_id_from_address() returns ids up to 0x63 (0x166 - 0x164 + 0x61);
  * 0xFF is the out-of-range sentinel and is filtered by the record guards. */
-#define SC_V35_TOWN_ROUTE_GROUP_COUNT 0x61
+#define SC_V35_TOWN_ROUTE_GROUP_COUNT 0x64u
 
 typedef struct {
     uint64_t call_count;
@@ -35,5 +35,24 @@ void sc_sim_profiler_record_entry(uint32_t group_id, uint32_t address);
 void sc_sim_profiler_record_exit(uint32_t group_id, uint32_t cycles);
 void sc_sim_profiler_dump(void);
 int sc_sim_profiler_get_top_groups(uint32_t *out_groups, uint32_t max_groups);
+
+/* Whole-heap PC histogram: every dispatched instruction lands here, so unlike
+ * the v35 town-route table above it covers menu, loading and terrain code too.
+ * Time is attributed to the group that executed between the previous fetch and
+ * this one, in master-clock units, so totals sum to elapsed emulated time.
+ * 24-bit address space in 1 KiB groups (the dispatch index stride). */
+#define SC_SIM_PC_GROUP_COUNT 0x4000u
+
+typedef struct {
+    uint64_t instruction_count;
+    uint64_t total_cycles;
+    uint32_t last_address;
+} ScSimPcGroupProfile;
+
+extern ScSimPcGroupProfile g_sim_pc_group_profiles[SC_SIM_PC_GROUP_COUNT];
+
+void sc_sim_profiler_record_pc(uint32_t address, uint64_t master_clock);
+void sc_sim_profiler_dump_pc(uint32_t max_rows);
+int sc_sim_profiler_get_top_pc_groups(uint32_t *out_groups, uint32_t max_groups);
 
 #endif

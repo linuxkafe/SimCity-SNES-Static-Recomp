@@ -1,11 +1,14 @@
 #include "sc_v11_runtime.h"
 #include "sc_core_internal.h"
+#include "sc_simulation_profiler.h"
 #include <string.h>
 #include <stdio.h>
 
 void sc_v11_trace_cpu_instruction(SCV11Runtime *runtime, uint32_t address) {
-    (void)runtime;
-    (void)address;
+    /* Per-instruction hook: costs one flag test in normal runs and feeds the
+       1 KiB PC histogram when headless-profile has enabled profiling. */
+    if (!runtime || !g_sim_profiling_enabled) return;
+    sc_sim_profiler_record_pc(address, (uint64_t)runtime->scheduler.master_clock);
 }
 
 uint8_t sc_v11_pack_p(const SCCpuState *cpu) { return cpu ? cpu->p : 0u; }

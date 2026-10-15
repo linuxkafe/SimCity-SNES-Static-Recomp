@@ -16,33 +16,35 @@
 #define SIMCITY_HOST_PCM_CAPACITY_FRAMES 65536u
 
 struct SimCityRecomp {
-    uint8_t *rom;
-    SCV11Runtime *runtime;
-    uint16_t bgr555[SIMCITY_RECOMP_MAX_FRAME_PIXELS];
-    uint32_t bgra[SIMCITY_RECOMP_MAX_FRAME_PIXELS];
-    uint8_t widescreen;
-    int16_t widescreen_cursor_extension_x;
-    int16_t widescreen_cursor_base_x;
-    int16_t widescreen_cursor_anchor_view_x;
-    uint16_t widescreen_cursor_anchor_fine_x;
-    uint8_t widescreen_cursor_anchor_valid;
-    uint8_t widescreen_cursor_input_rebased;
-    SCV28VideoReport video;
-    int16_t audio_pcm[SIMCITY_HOST_PCM_CAPACITY_FRAMES *
-                      SIMCITY_RECOMP_AUDIO_CHANNELS];
-    uint32_t audio_read_frame;
-    uint32_t audio_write_frame;
-    uint32_t audio_available_frames;
-    uint8_t audio_overflow;
-    uint64_t audio_dropped_frames;
-    uint8_t static_acquired;
-    char last_error[256];
-    uint16_t *input_history;
-    uint32_t input_history_count;
-    uint32_t input_history_capacity;
-    uint8_t replaying_snapshot;
-    uint8_t initialized;
-};
+     uint8_t *rom;
+     SCV11Runtime *runtime;
+     uint16_t bgr555[SIMCITY_RECOMP_MAX_FRAME_PIXELS];
+     uint32_t bgra[SIMCITY_RECOMP_MAX_FRAME_PIXELS];
+     uint8_t widescreen;
+     int16_t widescreen_cursor_extension_x;
+     int16_t widescreen_cursor_base_x;
+     int16_t widescreen_cursor_anchor_view_x;
+     uint16_t widescreen_cursor_anchor_fine_x;
+     uint8_t widescreen_cursor_anchor_valid;
+     uint8_t widescreen_cursor_input_rebased;
+     SCV28VideoReport video;
+     int16_t audio_pcm[SIMCITY_HOST_PCM_CAPACITY_FRAMES *
+                       SIMCITY_RECOMP_AUDIO_CHANNELS];
+     uint32_t audio_read_frame;
+     uint32_t audio_write_frame;
+     uint32_t audio_available_frames;
+     uint8_t audio_overflow;
+     uint64_t audio_dropped_frames;
+     uint8_t static_acquired;
+     char last_error[256];
+     uint16_t *input_history;
+     uint32_t input_history_count;
+     uint32_t input_history_capacity;
+     uint8_t replaying_snapshot;
+     uint8_t initialized;
+     uint32_t last_render_hash;
+     uint8_t last_render_valid;
+ };
 
 static void copy_text(char *destination, size_t capacity, const char *source);
 
@@ -454,14 +456,32 @@ static void audio_sink(void *context, int16_t left, int16_t right) {
         (frame + 1u) % SIMCITY_HOST_PCM_CAPACITY_FRAMES;
     instance->audio_available_frames++;
 }
-
-static int render_current_frame(SimCityRecomp *instance, char *error,
+ 
+ static uint32_t snapshot_hash_bytes(uint32_t h, const void *data, size_t size);
+ 
+ static int render_current_frame(SimCityRecomp *instance, char *error,
                                 size_t error_capacity) {
     unsigned width = instance->widescreen ? SIMCITY_RECOMP_WIDESCREEN_WIDTH :
                                             SIMCITY_RECOMP_FRAME_WIDTH;
     unsigned margin = instance->widescreen ? SIMCITY_RECOMP_WIDESCREEN_MARGIN : 0u;
+    SCV11Runtime *rt = instance->runtime;
+    SCMachine *m = &rt->machine;
+    uint32_t h = 2166136261u;
+    h = snapshot_hash_bytes(h, m->vram, sizeof(m->vram));
+    h = snapshot_hash_bytes(h, m->cgram, sizeof(m->cgram));
+    h = snapshot_hash_bytes(h, m->oam, sizeof(m->oam));
+    for (int i = 0x100; i < 0x200; ++i) {
+        h = snapshot_hash_bytes(h, &m->mmio[i], 1);
+    }
+    h = snapshot_hash_bytes(h, &m->ppu_brightness, 1);
+    h = snapshot_hash_bytes(h, &m->ppu_forced_blank, 1);
+    if (instance->last_render_valid && instance->last_render_hash == h) {
+        return 1;
+    }
+    instance->last_render_hash = h;
+    instance->last_render_valid = 1;
     memset(&instance->video, 0, sizeof(instance->video));
-    if (!sc_v28_render_first_visible_frame(instance->runtime,
+    if (!sc_v28_render_first_visible_frame(rt,
                                            width, margin,
                                            instance->bgr555,
                                            SIMCITY_RECOMP_MAX_FRAME_PIXELS,

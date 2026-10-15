@@ -128,13 +128,8 @@ void sc_v11_scheduler_advance(SCV11Runtime *runtime, uint32_t clocks) {
         raw_clock(runtime);
         refresh(runtime);
     }
-    /* Major 5: the audio oscillator is independent, but every modeled S-CPU
-       bus segment has an exact end clock.  Rendezvous here rather than only at
-       scanline boundaries.  APUIO reads that sample after two clocks naturally
-       call this function before the latch is observed; writes occur after the
-       full bus cycle and therefore publish their latch after this rendezvous. */
-    if (!runtime->route_failed)
-        (void)sc_v11_smp_sync_to_master(runtime, runtime->scheduler.master_clock);
+    /* APUIO port accesses (0x2140-0x2143) already sync via sc_v11_smp_cpu_read_port/write_port.
+       Full APU/DSP sync is only needed at frame boundaries for audio sample generation. */
 }
 
 void sc_v11_scheduler_cpu_cycle_sample(SCV11Runtime *runtime) {
