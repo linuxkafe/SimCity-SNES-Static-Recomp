@@ -47,6 +47,10 @@ static SimCityLinuxConfig g_config;
 static char g_settings_path[512] = "settings.ini";
 static int g_running = 1;
 static uint32_t g_frame_count = 0;
+/* Frames the opened audio device actually accepted; bounds the queue cap. */
+static Uint32 g_audio_device_frames = 512u;
+/* Set by SIMCITY_AUDIO=1: print a once-per-second audio health line. */
+static int g_report_audio = 0;
 /* Scratch buffer for the ColorMode = swap red/blue path; grown on demand. */
 /* Edge state for the both-sticks menu shortcut. */
 static int g_sticks_menu_held = 0;
@@ -239,11 +243,19 @@ static void pump_audio(void)
 {
     int16_t chunk[2048 * SIMCITY_RECOMP_AUDIO_CHANNELS];
     size_t avail, take;
+    Uint32 max_queued_frames, max_queued_bytes;
 
     if (!g_audio_device || !g_recomp) return;
 
-    while (SDL_GetQueuedAudioSize(g_audio_device) >
-           (Uint32)(4 * SIMCITY_RECOMP_AUDIO_CHANNELS * 2048)) {
+    /* Cap the device queue at four device buffers (~64 ms with the 512-frame
+       buffer).  The previous bound was 4096 frames (~128 ms): whenever the core
+       produced PCM faster than the device drained it, the queue climbed to that
+       ceiling and stayed there, which is the audible drag.  Four buffers leave
+       headroom for frame-time jitter without letting latency grow unbounded. */
+    max_queued_frames = g_audio_device_frames * 4u;
+    max_queued_bytes = max_queued_frames * SIMCITY_RECOMP_AUDIO_CHANNELS *
+                       (Uint32)sizeof(int16_t);
+    while (SDL_GetQueuedAudioSize(g_audio_device) > max_queued_bytes) {
         if (!SDL_DequeueAudio(g_audio_device, chunk,
                               sizeof(chunk) / sizeof(chunk[0])))
             break;
@@ -259,6 +271,36 @@ static void pump_audio(void)
     SDL_QueueAudio(g_audio_device, chunk,
                    (Uint32)(take * sizeof(int16_t) *
                             SIMCITY_RECOMP_AUDIO_CHANNELS));
+}
+
+/* Opt-in audio health report (SIMCITY_AUDIO=1).  Prints the real device-queue
+   latency in milliseconds plus the core-side backlog once per second, so "the
+   sound drags" becomes a number instead of a guess. */
+static void report_audio_health(void)
+{
+    static Uint32 last_ms = 0;
+    Uint32 now = SDL_GetTicks();
+    Uint32 queued_bytes;
+    size_t backlog;
+
+    if (now - last_ms < 1000u) return;   /* once per second */
+    last_ms = now;
+    if (!g_audio_device || !g_recomp) return;
+
+    queued_bytes = SDL_GetQueuedAudioSize(g_audio_device);
+    backlog = simcity_recomp_audio_available(g_recomp);
+    fprintf(stderr,
+            "audio: queue %.1f ms (%u B)  core backlog %zu frames (%.1f ms)  "
+            "dropped %llu%s\n",
+            (double)queued_bytes * 1000.0 /
+                ((double)SIMCITY_RECOMP_HOST_AUDIO_SAMPLE_RATE *
+                 SIMCITY_RECOMP_AUDIO_CHANNELS * sizeof(int16_t)),
+            queued_bytes,
+            backlog,
+            (double)backlog * 1000.0 /
+                (double)SIMCITY_RECOMP_HOST_AUDIO_SAMPLE_RATE,
+            (unsigned long long)simcity_recomp_audio_dropped_frames(g_recomp),
+            simcity_recomp_audio_overflowed(g_recomp) ? " [OVERFLOW]" : "");
 }
 
 static int load_rom(const char *path, uint8_t **rom, size_t *rom_size)
@@ -389,6 +431,7 @@ static int init_sdl(void)
         fprintf(stderr, "SDL_OpenAudioDevice failed: %s\n", SDL_GetError());
         return -1;
     }
+    g_audio_device_frames = spec.samples;
 
     SDL_PauseAudioDevice(g_audio_device, 0);
 
@@ -549,6 +592,8 @@ static void print_usage(const char *argv0)
     fprintf(stderr, "  Escape           Close the menu, or quit when it is closed\n");
     fprintf(stderr, "\nEnvironment variables:\n");
     fprintf(stderr, "  SIMCITY_ROM_PATH  ROM path (alternative to --rom)\n");
+    fprintf(stderr, "  SIMCITY_FPS=1     Print measured frame throughput\n");
+    fprintf(stderr, "  SIMCITY_AUDIO=1   Print audio queue latency and backlog\n");
 }
 
 int main(int argc, char **argv)
@@ -696,6 +741,7 @@ int main(int argc, char **argv)
     /* Opt-in frame timing: SIMCITY_FPS=1 prints measured throughput so the
        real frame budget can be verified on target hardware. */
     const int report_fps = getenv("SIMCITY_FPS") != NULL;
+    g_report_audio = getenv("SIMCITY_AUDIO") != NULL;
     Uint64 fps_window = next_deadline;
     uint32_t fps_frames = 0u;
 
@@ -865,6 +911,8 @@ int main(int argc, char **argv)
 
         if (simcity_recomp_audio_available(g_recomp) > audio_high_water)
             simcity_recomp_audio_discard(g_recomp);
+
+        if (g_report_audio) report_audio_health();
 
         next_deadline += frame_period;
         Uint64 now_perf = SDL_GetPerformanceCounter();
