@@ -48,6 +48,8 @@ uint32_t last_render_hash;
       int16_t last_scroll_x;
       int16_t last_scroll_y;
       uint8_t last_scroll_valid;
+      uint8_t loading_skip_remaining;
+      uint8_t loading_skip_frames;
   };
 
 static void copy_text(char *destination, size_t capacity, const char *source);
@@ -508,6 +510,23 @@ static int render_current_frame(SimCityRecomp *instance, char *error,
     unsigned margin = instance->widescreen ? SIMCITY_RECOMP_WIDESCREEN_MARGIN : 0u;
     SCV11Runtime *rt = instance->runtime;
     SCMachine *m = &rt->machine;
+
+    /* Load-screen render throttle: heuristic - after city creation confirmation
+     * (detected by funds becoming non-zero), skip render for N frames. */
+    if (instance->loading_skip_remaining > 0) {
+        instance->loading_skip_remaining--;
+        return 1;  /* Reuse previous framebuffer */
+    }
+    /* Load-screen render throttle: heuristic - after frame 860 (post city creation
+     * confirmation), skip render for N frames. */
+    if (instance->loading_skip_remaining > 0) {
+        instance->loading_skip_remaining--;
+        return 1;  /* Reuse previous framebuffer */
+    }
+    /* Trigger: after frame 860 (post city creation sequence) */
+    if (rt->scheduler.frame >= 860 && instance->loading_skip_remaining == 0) {
+        instance->loading_skip_remaining = instance->loading_skip_frames;
+    }
     uint32_t h_full = 2166136261u;
     uint32_t h_no_scroll = 2166136261u;
     h_full = snapshot_hash_bytes(h_full, m->vram, sizeof(m->vram));
@@ -1110,6 +1129,19 @@ int simcity_recomp_set_widescreen(SimCityRecomp *instance, int enabled,
         instance->widescreen_cursor_input_rebased = 0u;
     }
     return render_current_frame(instance, error, error_capacity);
+}
+
+int simcity_recomp_set_loading_skip_frames(SimCityRecomp *instance,
+                                           int frames,
+                                           char *error, size_t error_capacity) {
+    if (!instance || frames < 0 || frames > 60) {
+        copy_text(error, error_capacity,
+                  "Loading skip frames must be between 0 and 60.");
+        return 0;
+    }
+    instance->loading_skip_frames = (uint8_t)frames;
+    copy_text(error, error_capacity, "");
+    return 1;
 }
 
 uint32_t simcity_recomp_current_frame(const SimCityRecomp *instance) {

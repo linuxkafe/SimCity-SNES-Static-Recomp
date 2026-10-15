@@ -38,6 +38,7 @@ void simcity_linux_config_defaults(SimCityLinuxConfig *config)
        upload presents with red and blue transposed.  The numeric value is what
        gets written to settings.ini, so it stays 1. */
     config->color_mode = SIMCITY_COLOR_SWAP_RB;
+    config->loading_skip_frames = 4;
 }
 
 static void trim(char *s)
@@ -151,6 +152,10 @@ int simcity_settings_ini_load(const char *path, SimCityLinuxConfig *config)
                 if (value >= SIMCITY_COLOR_NORMAL && value <= SIMCITY_COLOR_SWAP_RB)
                     config->color_mode = (SimCityColorMode)value;
             }
+            else if (strcmp(line, "LoadingSkipFrames") == 0 && in_general(section)) {
+                if (value >= 0 && value <= 60)
+                    config->loading_skip_frames = value;
+            }
         }
     }
     fclose(file);
@@ -167,7 +172,7 @@ static const char kBanner[] = "; SimCity SNES Static Recomp settings.\n";
 static const char *const owned_keys[] = {
     "Width", "Height", "Widescreen", "SoftMouse", "MouseSens", "FreezeMoney",
     "MoneyNeverDecrease", "EarnPerBuild", "TimeFaster", "TimeSlower",
-    "AllPower", "DemolishAnything", "Renderer", "ColorMode"
+    "AllPower", "DemolishAnything", "Renderer", "ColorMode", "LoadingSkipFrames"
 };
 #define SIMCITY_INI_OWNED_COUNT (sizeof(owned_keys) / sizeof(owned_keys[0]))
 
@@ -208,6 +213,7 @@ static void format_owned_value(const SimCityLinuxConfig *config,
     else if (strcmp(name, "DemolishAnything") == 0) snprintf(out, cap, "%d", config->demolish_anything != 0);
     else if (strcmp(name, "Renderer") == 0)       snprintf(out, cap, "%d", (int)config->renderer);
     else if (strcmp(name, "ColorMode") == 0)      snprintf(out, cap, "%d", (int)config->color_mode);
+    else if (strcmp(name, "LoadingSkipFrames") == 0) snprintf(out, cap, "%d", config->loading_skip_frames);
     else { snprintf(out, cap, "0"); return; }
 }
 

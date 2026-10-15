@@ -172,6 +172,15 @@ static void apply_config_to_frontend(void)
                 fprintf(stderr, "widescreen change failed: %s\n", ws_error);
             simcity_menu_res_size(SIMCITY_MENU_RES_COUNT - 1, &w, &h);
         }
+        /* Apply loading skip frames setting. */
+        {
+            char ls_error[256];
+            memset(ls_error, 0, sizeof(ls_error));
+            if (simcity_recomp_set_loading_skip_frames(g_recomp,
+                                                        g_config.loading_skip_frames,
+                                                        ls_error, sizeof(ls_error)) != 1)
+                fprintf(stderr, "loading skip frames change failed: %s\n", ls_error);
+        }
         /* Texture geometry follows the widescreen flag. */
         {
             int tw = g_config.widescreen ? SIMCITY_RECOMP_WIDESCREEN_WIDTH
