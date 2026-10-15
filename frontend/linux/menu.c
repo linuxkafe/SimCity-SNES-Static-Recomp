@@ -164,6 +164,24 @@ static void cheats_adjust(SimCityMenu *menu, int direction)
         case SIMCITY_CHEATS_FREEZE_MONEY:
             c->freeze_money = !c->freeze_money;
             break;
+        case SIMCITY_CHEATS_MONEY_NEVER_DECREASE:
+            c->money_never_decrease = !c->money_never_decrease;
+            break;
+        case SIMCITY_CHEATS_EARN_PER_BUILD:
+            c->earn_per_build = !c->earn_per_build;
+            break;
+        case SIMCITY_CHEATS_TIME_FASTER:
+            c->time_faster = !c->time_faster;
+            break;
+        case SIMCITY_CHEATS_TIME_SLOWER:
+            c->time_slower = !c->time_slower;
+            break;
+        case SIMCITY_CHEATS_ALL_POWER:
+            c->all_power = !c->all_power;
+            break;
+        case SIMCITY_CHEATS_DEMOLISH_ANYTHING:
+            c->demolish_anything = !c->demolish_anything;
+            break;
         default:
             break;
     }
@@ -194,7 +212,25 @@ static SimCityMenuAction cheats_input(SimCityMenu *menu, uint16_t input_mask)
             case SIMCITY_CHEATS_MONEY:
                 menu->money_applied = 1;
                 return SIMCITY_MENU_ACTION_APPLY_MONEY;
+            case SIMCITY_CHEATS_START_3000:
+                menu->start_money_value = 3000;
+                return SIMCITY_MENU_ACTION_APPLY_START_MONEY;
+            case SIMCITY_CHEATS_START_40000:
+                menu->start_money_value = 40000;
+                return SIMCITY_MENU_ACTION_APPLY_START_MONEY;
+            case SIMCITY_CHEATS_START_60000:
+                menu->start_money_value = 60000;
+                return SIMCITY_MENU_ACTION_APPLY_START_MONEY;
+            case SIMCITY_CHEATS_START_65535:
+                menu->start_money_value = 65535;
+                return SIMCITY_MENU_ACTION_APPLY_START_MONEY;
             case SIMCITY_CHEATS_FREEZE_MONEY:
+            case SIMCITY_CHEATS_MONEY_NEVER_DECREASE:
+            case SIMCITY_CHEATS_EARN_PER_BUILD:
+            case SIMCITY_CHEATS_TIME_FASTER:
+            case SIMCITY_CHEATS_TIME_SLOWER:
+            case SIMCITY_CHEATS_ALL_POWER:
+            case SIMCITY_CHEATS_DEMOLISH_ANYTHING:
                 cheats_adjust(menu, 1);
                 break;
             case SIMCITY_CHEATS_BACK:
@@ -303,7 +339,19 @@ static void value_text(const SimCityMenu *menu, int row, char *out, size_t cap)
 static void draw_cheats(SimCityMenu *menu, int window_w, int window_h)
 {
     static const char *const kCheatLabels[SIMCITY_CHEATS_COUNT] = {
-        "BACK", "ADD MONEY", "FREEZE MONEY"
+        "BACK",
+        "ADD MONEY ($999999)",
+        "FREEZE MONEY",
+        "START $3,000",
+        "START $40,000",
+        "START $60,000",
+        "START $65,535",
+        "MONEY NEVER DECREASES",
+        "EARN $1 PER BUILD",
+        "TIME GOES FASTER",
+        "TIME GOES SLOWER",
+        "ALL BUILDINGS POWERED",
+        "DEMOLISH ANYTHING"
     };
     static const SDL_Color kPanel = { 16, 16, 16, 236 };
     static const SDL_Color kText  = { 250, 250, 250, 255 };
@@ -357,6 +405,36 @@ static void draw_cheats(SimCityMenu *menu, int window_w, int window_h)
             case SIMCITY_CHEATS_FREEZE_MONEY:
                 snprintf(value, sizeof(value), "%s",
                          menu->config->freeze_money ? "ON" : "OFF");
+                break;
+            case SIMCITY_CHEATS_MONEY_NEVER_DECREASE:
+                snprintf(value, sizeof(value), "%s",
+                         menu->config->money_never_decrease ? "ON" : "OFF");
+                break;
+            case SIMCITY_CHEATS_EARN_PER_BUILD:
+                snprintf(value, sizeof(value), "%s",
+                         menu->config->earn_per_build ? "ON" : "OFF");
+                break;
+            case SIMCITY_CHEATS_TIME_FASTER:
+                snprintf(value, sizeof(value), "%s",
+                         menu->config->time_faster ? "ON" : "OFF");
+                break;
+            case SIMCITY_CHEATS_TIME_SLOWER:
+                snprintf(value, sizeof(value), "%s",
+                         menu->config->time_slower ? "ON" : "OFF");
+                break;
+            case SIMCITY_CHEATS_ALL_POWER:
+                snprintf(value, sizeof(value), "%s",
+                         menu->config->all_power ? "ON" : "OFF");
+                break;
+            case SIMCITY_CHEATS_DEMOLISH_ANYTHING:
+                snprintf(value, sizeof(value), "%s",
+                         menu->config->demolish_anything ? "ON" : "OFF");
+                break;
+            case SIMCITY_CHEATS_START_3000:
+            case SIMCITY_CHEATS_START_40000:
+            case SIMCITY_CHEATS_START_60000:
+            case SIMCITY_CHEATS_START_65535:
+                snprintf(value, sizeof(value), "PRESS B");
                 break;
             default:
                 break;

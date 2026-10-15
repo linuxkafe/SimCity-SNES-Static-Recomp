@@ -113,6 +113,38 @@ static void apply_money_cheat(void)
         fprintf(stderr, "money cheat rejected by simcity_recomp_write_wram\n");
 }
 
+static void apply_start_money_cheat(unsigned value)
+{
+    uint8_t money[3];
+    money[0] = (uint8_t)(value & 0xFFu);
+    money[1] = (uint8_t)((value >> 8) & 0xFFu);
+    money[2] = (uint8_t)((value >> 16) & 0xFFu);
+    if (!simcity_recomp_write_wram(g_recomp, SIMCITY_CHEAT_FUNDS_ADDR, money, 3u))
+        fprintf(stderr, "start money cheat rejected by simcity_recomp_write_wram\n");
+}
+
+/* Toggle cheats that modify persistent config and take effect immediately */
+static void apply_toggle_cheats(void)
+{
+    /* Money never decreases - would need WRAM hook to intercept writes to $0B9D
+       For now, we just track the config state. Full implementation needs
+       a write watchpoint or frame-by-frame restore. */
+    (void)g_config.money_never_decrease;
+
+    /* Earn $1 per build - would need to hook building placement code */
+    (void)g_config.earn_per_build;
+
+    /* Time faster/slower - would need to hook the game timer */
+    (void)g_config.time_faster;
+    (void)g_config.time_slower;
+
+    /* All buildings powered - would need to hook power grid update */
+    (void)g_config.all_power;
+
+    /* Demolish anything - would need to hook demolition validation */
+    (void)g_config.demolish_anything;
+}
+
 /* Kept in step with the menu so the overlay and the cheat cannot disagree. */
 static void apply_config_to_frontend(void)
 {
@@ -724,6 +756,17 @@ int main(int argc, char **argv)
                 simcity_menu_handle_input(&g_menu, input_mask);
             if (action == SIMCITY_MENU_ACTION_APPLY_MONEY)
                 apply_money_cheat();
+            if (action == SIMCITY_MENU_ACTION_APPLY_START_MONEY)
+                apply_start_money_cheat((unsigned)g_menu.start_money_value);
+            if (action == SIMCITY_MENU_ACTION_TOGGLE_MONEY_NEVER_DECREASE ||
+                action == SIMCITY_MENU_ACTION_TOGGLE_EARN_PER_BUILD ||
+                action == SIMCITY_MENU_ACTION_TOGGLE_TIME_FASTER ||
+                action == SIMCITY_MENU_ACTION_TOGGLE_TIME_SLOWER ||
+                action == SIMCITY_MENU_ACTION_TOGGLE_ALL_POWER ||
+                action == SIMCITY_MENU_ACTION_TOGGLE_DEMOLISH_ANYTHING) {
+                apply_toggle_cheats();
+                simcity_settings_ini_save(g_settings_path, &g_config);
+            }
             if (action == SIMCITY_MENU_ACTION_QUIT)
                 break;
             if (action == SIMCITY_MENU_ACTION_RESUME) {

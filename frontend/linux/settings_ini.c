@@ -24,6 +24,12 @@ void simcity_linux_config_defaults(SimCityLinuxConfig *config)
     config->soft_mouse = 0;
     config->mouse_sens = 2;
     config->freeze_money = 0;
+    config->money_never_decrease = 0;
+    config->earn_per_build = 0;
+    config->time_faster = 0;
+    config->time_slower = 0;
+    config->all_power = 0;
+    config->demolish_anything = 0;
     /* AUTO tries accelerated first and falls back to software.  This must be
        set explicitly: renderer was left uninitialised, so a caller that never
        wrote the field got whatever the stack happened to hold. */
@@ -125,6 +131,18 @@ int simcity_settings_ini_load(const char *path, SimCityLinuxConfig *config)
                                                SIMCITY_MOUSE_SENS_MAX);
             else if (strcmp(line, "FreezeMoney") == 0 && in_general(section))
                 config->freeze_money = value != 0;
+            else if (strcmp(line, "MoneyNeverDecrease") == 0 && in_general(section))
+                config->money_never_decrease = value != 0;
+            else if (strcmp(line, "EarnPerBuild") == 0 && in_general(section))
+                config->earn_per_build = value != 0;
+            else if (strcmp(line, "TimeFaster") == 0 && in_general(section))
+                config->time_faster = value != 0;
+            else if (strcmp(line, "TimeSlower") == 0 && in_general(section))
+                config->time_slower = value != 0;
+            else if (strcmp(line, "AllPower") == 0 && in_general(section))
+                config->all_power = value != 0;
+            else if (strcmp(line, "DemolishAnything") == 0 && in_general(section))
+                config->demolish_anything = value != 0;
             else if (strcmp(line, "Renderer") == 0 && in_general(section)) {
                 if (value >= SIMCITY_RENDERER_AUTO && value <= SIMCITY_RENDERER_OPENGL)
                     config->renderer = (SimCityRenderer)value;
@@ -148,7 +166,8 @@ static const char kBanner[] = "; SimCity SNES Static Recomp settings.\n";
 
 static const char *const owned_keys[] = {
     "Width", "Height", "Widescreen", "SoftMouse", "MouseSens", "FreezeMoney",
-    "Renderer", "ColorMode"
+    "MoneyNeverDecrease", "EarnPerBuild", "TimeFaster", "TimeSlower",
+    "AllPower", "DemolishAnything", "Renderer", "ColorMode"
 };
 #define SIMCITY_INI_OWNED_COUNT (sizeof(owned_keys) / sizeof(owned_keys[0]))
 
@@ -175,14 +194,20 @@ static int key_may_be_replaced(const char *name, int inside_general)
 static void format_owned_value(const SimCityLinuxConfig *config,
                                const char *name, char *out, size_t cap)
 {
-    if (strcmp(name, "Width") == 0)           snprintf(out, cap, "%d", config->width);
-    else if (strcmp(name, "Height") == 0)     snprintf(out, cap, "%d", config->height);
-    else if (strcmp(name, "Widescreen") == 0) snprintf(out, cap, "%d", config->widescreen != 0);
-    else if (strcmp(name, "SoftMouse") == 0)  snprintf(out, cap, "%d", config->soft_mouse != 0);
-    else if (strcmp(name, "MouseSens") == 0)  snprintf(out, cap, "%d", config->mouse_sens);
-    else if (strcmp(name, "FreezeMoney") == 0) snprintf(out, cap, "%d", config->freeze_money != 0);
-    else if (strcmp(name, "Renderer") == 0)   snprintf(out, cap, "%d", (int)config->renderer);
-    else if (strcmp(name, "ColorMode") == 0)  snprintf(out, cap, "%d", (int)config->color_mode);
+    if (strcmp(name, "Width") == 0)               snprintf(out, cap, "%d", config->width);
+    else if (strcmp(name, "Height") == 0)         snprintf(out, cap, "%d", config->height);
+    else if (strcmp(name, "Widescreen") == 0)     snprintf(out, cap, "%d", config->widescreen != 0);
+    else if (strcmp(name, "SoftMouse") == 0)      snprintf(out, cap, "%d", config->soft_mouse != 0);
+    else if (strcmp(name, "MouseSens") == 0)      snprintf(out, cap, "%d", config->mouse_sens);
+    else if (strcmp(name, "FreezeMoney") == 0)    snprintf(out, cap, "%d", config->freeze_money != 0);
+    else if (strcmp(name, "MoneyNeverDecrease") == 0) snprintf(out, cap, "%d", config->money_never_decrease != 0);
+    else if (strcmp(name, "EarnPerBuild") == 0)   snprintf(out, cap, "%d", config->earn_per_build != 0);
+    else if (strcmp(name, "TimeFaster") == 0)     snprintf(out, cap, "%d", config->time_faster != 0);
+    else if (strcmp(name, "TimeSlower") == 0)     snprintf(out, cap, "%d", config->time_slower != 0);
+    else if (strcmp(name, "AllPower") == 0)       snprintf(out, cap, "%d", config->all_power != 0);
+    else if (strcmp(name, "DemolishAnything") == 0) snprintf(out, cap, "%d", config->demolish_anything != 0);
+    else if (strcmp(name, "Renderer") == 0)       snprintf(out, cap, "%d", (int)config->renderer);
+    else if (strcmp(name, "ColorMode") == 0)      snprintf(out, cap, "%d", (int)config->color_mode);
     else { snprintf(out, cap, "0"); return; }
 }
 

@@ -44,6 +44,12 @@ typedef struct {
     int soft_mouse;
     int mouse_sens;
     int freeze_money;
+    int money_never_decrease;
+    int earn_per_build;
+    int time_faster;
+    int time_slower;
+    int all_power;
+    int demolish_anything;
     int renderer;   /* SimCityRenderer */
     int color_mode; /* SimCityColorMode */
 } SimCityLinuxConfig;
