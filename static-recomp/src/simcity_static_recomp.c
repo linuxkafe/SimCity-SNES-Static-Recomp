@@ -557,6 +557,9 @@ static int render_current_frame(SimCityRecomp *instance, char *error,
     }
 
     /* Full render required. */
+    /* TODO(load‑opt): PC group 0x09000 accounts for ~89 % of cycles during city load.
+       Investigate generated code in that 1 KiB window (VRAM write / tile‑map init)
+       and consider batching VRAM updates or adding a dirty‑tile render path. */
     instance->last_render_hash = h_full;
     instance->last_render_hash_no_scroll = h_no_scroll;
     instance->last_scroll_x = scroll_x;
