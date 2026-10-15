@@ -54,6 +54,32 @@ void sc_v11_vram_write_flush(SCV11Runtime *runtime) {
     vram_write_buffer_flush(runtime);
 }
 
+/* Dirty-tile bitmap helpers for partial PPU render.
+ * Tilemap is treated as 1024×1024 logical tiles (8×8 pixels each).
+ * Tile index = (tile_y << 10) | tile_x, where tile_x = vram_addr & 0x3FF, tile_y = (vram_addr >> 10) & 0x3FF.
+ * Only tilemap region (VRAM 0x0000-0x7FFF) is tracked. */
+
+static inline void vram_mark_tile_dirty_impl(SCV11Runtime *runtime, uint16_t vram_addr) {
+    if (vram_addr >= 0x8000u) return;  // Only tilemap region
+    uint32_t tile_idx = ((vram_addr >> 10) & 0x3FFu) << 10 | (vram_addr & 0x3FFu);
+    runtime->vram_dirty_tiles[tile_idx >> 3] |= (1u << (tile_idx & 7u));
+}
+
+void sc_v11_vram_mark_tile_dirty(SCV11Runtime *runtime, uint16_t vram_addr) {
+    vram_mark_tile_dirty_impl(runtime, vram_addr);
+}
+
+void sc_v11_vram_mark_range_dirty(SCV11Runtime *runtime, uint16_t start, uint16_t len) {
+    uint16_t end = start + len;
+    if (end > 0x8000u) end = 0x8000u;
+    for (uint16_t addr = start; addr < end; addr++) {
+        vram_mark_tile_dirty_impl(runtime, addr);
+    }
+}
+
+void sc_v11_vram_clear_dirty(SCV11Runtime *runtime) {
+    memset(runtime->vram_dirty_tiles, 0, sizeof(runtime->vram_dirty_tiles));
+}
 
 static const uint8_t sc_v11_dma_offsets[8][4] = {
     {0u, 0u, 0u, 0u},
@@ -241,13 +267,6 @@ static void sc_v11_ppu_write_raw(SCV11Runtime *runtime, uint16_t address, uint8_
             machine->vram_remap_mode = (uint8_t)((value >> 2) & 3u);
             machine->vram_increment_on_high = (uint8_t)((value & 0x80u) != 0u);
             break;
-        case 0x2116u:
-            machine->vram_address = (uint16_t)((machine->vram_address & 0x7f00u) | value);
-            break;
-        case 0x2117u:
-            machine->vram_address = (uint16_t)((machine->vram_address & 0x00ffu) |
-                                    ((uint16_t)(value & 0x7fu) << 8));
-            break;
 case 0x2118u: {
             uint16_t word = sc_v11_vram_effective_address(machine);
             uint32_t vram_addr = (uint32_t)word * 2u;
@@ -262,6 +281,7 @@ case 0x2118u: {
                 g_vram_write_buffer.len = 1;
                 g_vram_write_buffer.active = true;
             }
+            sc_v11_vram_mark_tile_dirty(runtime, (uint16_t)vram_addr);
             if (!machine->vram_increment_on_high) {
                 machine->vram_address = (uint16_t)((machine->vram_address +
                                     machine->vram_increment) & 0x7fffu);
@@ -282,6 +302,7 @@ case 0x2118u: {
                 g_vram_write_buffer.len = 1;
                 g_vram_write_buffer.active = true;
             }
+            sc_v11_vram_mark_tile_dirty(runtime, (uint16_t)vram_addr);
             if (machine->vram_increment_on_high) {
                 machine->vram_address = (uint16_t)((machine->vram_address +
                                     machine->vram_increment) & 0x7fffu);

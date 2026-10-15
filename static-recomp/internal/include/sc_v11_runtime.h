@@ -138,6 +138,10 @@ typedef struct SCV11Runtime {
     SCAudioTransportState audio_transport;
     SCAudioRuntimeTrace audio_trace;
     SCAudioEpochTrace audio_epoch_trace;
+    /* Dirty-tile bitmap for partial PPU render: 1024×1024 tiles / 8 = 16384 bytes.
+     * Covers full logical 1024×1024 tilemap; actual BG tilemap is smaller (32×32 or 64×64).
+     * Bit set = corresponding 8×8 tile was written this frame. */
+    uint8_t vram_dirty_tiles[16384];
 } SCV11Runtime;
 
 
@@ -150,6 +154,8 @@ int sc_v11_process_pending_dma(SCV11Runtime*,uint8_t);
 uint8_t sc_v11_bus_peek8(const SCV11Runtime*,uint32_t); uint16_t sc_v11_bus_peek16(const SCV11Runtime*,uint32_t);
 uint8_t sc_v11_bus_read8(SCV11Runtime*,uint32_t); uint16_t sc_v11_bus_read16(SCV11Runtime*,uint32_t);
 void sc_v11_bus_write8(SCV11Runtime*,uint32_t,uint8_t); void sc_v11_bus_write16(SCV11Runtime*,uint32_t,uint16_t);
+void sc_v11_vram_mark_tile_dirty(SCV11Runtime*,uint16_t); void sc_v11_vram_mark_range_dirty(SCV11Runtime*,uint16_t,uint16_t);
+void sc_v11_vram_clear_dirty(SCV11Runtime*);
 uint8_t sc_v11_bus_speed(uint32_t,uint8_t); void sc_v11_scheduler_advance(SCV11Runtime*,uint32_t);
 void sc_v11_scheduler_code_access(SCV11Runtime*,uint32_t,unsigned); void sc_v11_scheduler_internal_cycle(SCV11Runtime*,unsigned);
 void sc_v11_scheduler_program_bus_cycle(SCV11Runtime*,uint32_t); void sc_v11_scheduler_idle_or_read(SCV11Runtime*); void sc_v11_scheduler_cpu_cycle_sample(SCV11Runtime*);
