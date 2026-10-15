@@ -279,8 +279,11 @@ SimCityMenuAction simcity_menu_handle_input(SimCityMenu *menu, uint16_t input_ma
     if (nav_pressed(menu, input_mask, SIMCITY_INPUT_RIGHT))
         adjust_row(menu, menu->selected, +1);
 
-    /* B is confirm, matching the guest, where B confirms and A cancels. */
-    if (nav_pressed(menu, input_mask, SIMCITY_INPUT_B)) {
+    /* B is confirm, matching the guest, where B confirms and A cancels.
+       START (Enter on a keyboard) is accepted as a second confirm so the
+       submenu is reachable without knowing the SNES B mapping. */
+    if (nav_pressed(menu, input_mask, SIMCITY_INPUT_B) ||
+        nav_pressed(menu, input_mask, SIMCITY_INPUT_START)) {
         switch ((RowId)menu->selected) {
             case ROW_CHEATS:
                 menu->in_cheats = 1;
@@ -328,7 +331,7 @@ static void value_text(const SimCityMenu *menu, int row, char *out, size_t cap)
                                        ? "SWAP R/B" : "NORMAL");
             break;
         case ROW_CHEATS:
-            snprintf(out, cap, "%s", "ENTER");
+            out[0] = '\0';   /* like RESUME/QUIT: an action, not a value */
             break;
         default:
             out[0] = '\0';
@@ -519,5 +522,5 @@ void simcity_menu_draw(SimCityMenu *menu, int window_w, int window_h)
 
     simcity_gui_set_colors(&menu->gui, kValue, kPanel);
     simcity_gui_text_centered(&menu->gui, window_w / 2, y0 + panel_h - 16,
-                             "ARROWS CHANGE   B SELECT   F1 MENU");
+                             "ARROWS CHANGE   B/ENTER SELECT   F1 MENU");
 }
