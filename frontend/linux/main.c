@@ -373,7 +373,7 @@ static int init_sdl(void)
         const char *hint = SDL_getenv("SDL_RENDER_DRIVER");
         if (hint && SDL_strcasecmp(hint, "software") == 0) want_accel = 0;
     }
-    Uint32 flags = want_accel ? SDL_RENDERER_ACCELERATED : SDL_RENDERER_SOFTWARE;
+    Uint32 flags = (want_accel ? SDL_RENDERER_ACCELERATED : SDL_RENDERER_SOFTWARE) | SDL_RENDERER_PRESENTVSYNC;
     g_renderer = SDL_CreateRenderer(g_window, -1, flags);
     if (!g_renderer) {
         g_renderer = SDL_CreateRenderer(g_window, -1, SDL_RENDERER_SOFTWARE);

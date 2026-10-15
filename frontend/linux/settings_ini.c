@@ -21,7 +21,7 @@ void simcity_linux_config_defaults(SimCityLinuxConfig *config)
     config->width = 1280;
     config->height = 800;
     config->widescreen = 1;
-    config->soft_mouse = 0;
+    config->soft_mouse = 1;
     config->mouse_sens = 2;
     config->freeze_money = 0;
     config->money_never_decrease = 0;
