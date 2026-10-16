@@ -153,6 +153,10 @@ deliberately left out: they are unverified here and would silently do nothing.
 d-pad presses from per-frame pointer motion. The OS cursor is hidden while it is
 on, because the guest draws its own.
 
+The pointer buttons drive the guest face buttons: **left mouse is A**, **right
+mouse is B**. The title has no SNES Mouse peripheral, so this is the only
+mouse-shaped behaviour available for confirming actions.
+
 This is deliberately *not* a SNES Mouse emulation. That peripheral would have to
 be answered on a controller port, and the SimCity ROM never asks for one: a
 mouse is distinguished from a pad by reads past bit 15 (`$4219`/`$421A`/`$421B`),

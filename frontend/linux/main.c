@@ -41,6 +41,7 @@ static int   g_mouse_sens = 2;      /* texture px of motion needed per frame */
 static int   g_mouse_have = 0;      /* last pointer sample valid */
 static int   g_mouse_px = 0, g_mouse_py = 0;
 static int   g_mouse_dx = 0, g_mouse_dy = 0;   /* per-frame pointer delta */
+static int   g_mouse_left_down = 0, g_mouse_right_down = 0;  /* -> guest A / B */
 static int   g_size_explicit = 0;        /* --size overrides --resolution */
 static SimCityMenu g_menu;
 static SimCityLinuxConfig g_config;
@@ -226,6 +227,13 @@ static void soft_mouse_sample(void)
     if (win_w <= 0 || win_h <= 0) return;
 
     buttons = SDL_GetMouseState(&mx, &my);
+    /* Left mouse is the guest A button, right mouse is the guest B button.
+       The guest has no SNES Mouse peripheral, so the d-pad cursor plus the
+       face buttons driven from the pointer is the only mouse-shaped input
+       the title can use. */
+    g_mouse_left_down  = (buttons & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0u;
+    g_mouse_right_down = (buttons & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0u;
+
     tex_w = simcity_recomp_widescreen_enabled(g_recomp)
                 ? SIMCITY_RECOMP_WIDESCREEN_WIDTH
                 : SIMCITY_RECOMP_FRAME_WIDTH;
@@ -240,7 +248,6 @@ static void soft_mouse_sample(void)
 
     if (!g_mouse_have) {
         g_mouse_px = tx; g_mouse_py = ty; g_mouse_have = 1;
-        (void)buttons;
         return;
     }
     g_mouse_dx = tx - g_mouse_px;
@@ -501,6 +508,9 @@ static void handle_input(uint16_t *input_mask)
             else if (g_mouse_dy <= -g_mouse_sens) *input_mask |= SIMCITY_INPUT_UP;
         }
     }
+    /* Pointer buttons drive the guest face buttons: left = A, right = B. */
+    if (g_mouse_left_down)  *input_mask |= SIMCITY_INPUT_A;
+    if (g_mouse_right_down) *input_mask |= SIMCITY_INPUT_B;
 }
 
 static int advance_frame(uint16_t input_mask)
