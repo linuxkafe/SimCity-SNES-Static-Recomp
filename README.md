@@ -104,15 +104,26 @@ The menu **pauses the guest**: no frame advances and no audio drains while it
 is open. Advancing would spend money or scroll the city underneath the settings
 being changed.
 
+Both the settings menu and the **CHEATS** submenu are full-screen overlays.
+
 | Row | Effect |
 |-----|--------|
 | Resolution | 480p / 720p / 800p / 1080p, applied to the live window |
 | Widescreen | Toggles the 398x239 core output |
-| Soft mouse | Toggles pointer-driven cursor |
+| Soft mouse | Toggles pointer-driven cursor (on by default) |
 | Mouse sens | 1-16, lower is more sensitive |
-| Money | One-shot: sets funds to 999999 |
-| Freeze money | Toggles topping funds up every frame |
+| Color | `SWAP R/B` (default) or `NORMAL` |
+| Cheats | Opens the submenu |
 | Resume / Quit | — |
+
+In the cheats submenu, **B** confirms a one-shot action or toggles the selected
+value row, and **X** (A on the pad) goes back. Both are edge-triggered, so
+holding B toggles once rather than flipping every frame.
+
+The frame the game draws is scaled to the window with **linear filtering**
+(`SDL_SetTextureScaleMode`), so upscaling is smooth rather than blocky. Point
+sampling would be sharper for pixel art but shows hard square edges at large
+window sizes; this can be revisited if a sharper look is preferred.
 
 Settings persist to `settings.ini` on exit and are read at startup. The file
 uses the same `[General]` section and key names the Windows launcher writes, so
@@ -352,24 +363,68 @@ yourself.
 
 ## Performance notes (measured)
 
-Frame budget on the Steam Deck is 16.641 ms (60.0988 Hz NTSC). Measured with
-`SIMCITY_FPS=1`, which reports observed throughput:
+Frame budget on the Steam Deck is 16.641 ms (60.0988 Hz NTSC).
+
+### Emulation versus rendering
+
+`simcity_recomp_advance()` performs the real render internally; a *second*
+call to `simcity_recomp_render_current_frame()` then hits the full-state frame
+cache and costs almost nothing. Any tool that times those two calls separately
+and labels them "advance" and "render" is reporting the render cost under the
+wrong heading. Measured directly against `simcity_recomp_advance_headless()`,
+which passes `render_frame = 0`:
+
+| Component | Cost per frame |
+|-----------|----------------|
+| Emulation (`advance_headless`, no render) | **3.57 ms** |
+| Rendering | **~10.5 ms** |
+| Total | **~14.1 ms** |
+
+Rendering is roughly **75 %** of the frame. `headless-profile` grew a
+`--no-pc-profile` flag so timings can be taken without the per-instruction PC
+histogram, which is otherwise active during every run.
+
+### Current figures (dev host, `-O3` Release)
 
 | Configuration | Per frame | Observed |
 |---------------|-----------|----------|
 | `-O0` build, frame rendered twice | ~105 ms | ~10 fps |
 | `-O3` Release, frame rendered twice | ~34 ms | ~29 fps |
-| `-O3` Release, single render (current) | ~15.4 ms | **57.4 fps avg** |
-| `-O3` Release, emulation‑only + frame‑cache (title/menu) | ~13 ms | **≈77 fps** |
-| `-O3` Release, full frame after city load (map scroll) | ~30‑35 ms | **≈30 fps** |
+| `-O3` Release, single render | **~14.1 ms** | **~71 fps** |
+| `-O3` Release, emulation only | ~3.6 ms | ~280 fps |
 
-Frame work is 15.4 ms inside a 16.641 ms budget, leaving ~1.2 ms of slack.
-`SDL_Delay` has roughly millisecond granularity and tends to overshoot, so the
-loop reaches 60 fps intermittently rather than holding it; the average on the
-Deck is 57.4 fps. Reaching a locked 60 would need a sub-millisecond wait tail
-(`SDL_DelayNS` or a spin), which was not judged worth the CPU.
+Median of six runs over 950 frames. The earlier ~15.4 ms / 57.4 fps figure
+predates the per-pixel optimisations below.
 
-Three separate problems were compounding:
+### What made the renderer faster
+
+The background sampler runs three times per pixel, so its arithmetic dominates.
+Three changes, each verified **bit-identical** by comparing frame hashes over
+950 frames:
+
+1. `background_pixel` divided by runtime values four times per pixel. The map
+   is always 32 or 64 cells and the tile size always 8 or 16, so every divisor
+   is a power of two and the results are provably unchanged by shifts and
+   masks. −14.7 %.
+2. The same substitution in `city_background_pixel` (widescreen sampler).
+   No measurable effect on the headless benchmark, because the widescreen city
+   view is never reached in those 950 frames; kept because it is provably
+   equivalent and removes four divisions per pixel from the live city view.
+3. ~15 PPU constants (mode, bpp, layer size register, map base, character
+   base, tile size, world extents, mosaic parameters) were recomputed on
+   every pixel although they depend only on registers latched per scanline.
+   They are now computed once per line per layer. −9.1 %.
+
+Render-path work is now ~10.5 ms of the ~14.1 ms frame. What remains in
+`background_pixel` is genuine VRAM tilemap and tile fetch.
+
+Link-time optimisation was evaluated and rejected: it changed the measured
+time by ~0.6 %, within run-to-run noise, and cost a 4× build-time increase.
+
+The remaining wait tail is why 60 fps is reached but not locked: `SDL_Delay`
+has roughly millisecond granularity and tends to overshoot.
+
+Two further problems were compounding:
 
 1. **Unoptimised build.** With no `CMAKE_BUILD_TYPE` the core compiled at
    `-O0`. The build system now defaults `CMAKE_BUILD_TYPE` to `Release`;
