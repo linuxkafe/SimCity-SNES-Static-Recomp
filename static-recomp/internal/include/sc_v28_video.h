@@ -38,5 +38,15 @@ int sc_v28_render_first_visible_frame(const SCV11Runtime *runtime,
                                       uint32_t *bgra,
                                       size_t bgra_capacity,
                                       SCV28VideoReport *report);
+int sc_v28_render_first_visible_frame_columns(const SCV11Runtime *runtime,
+                                              unsigned output_width,
+                                              unsigned left_margin,
+                                              unsigned x_begin,
+                                              unsigned x_end,
+                                              uint16_t *bgr555,
+                                              size_t bgr555_capacity,
+                                              uint32_t *bgra,
+                                              size_t bgra_capacity,
+                                              SCV28VideoReport *report);
 
 #endif

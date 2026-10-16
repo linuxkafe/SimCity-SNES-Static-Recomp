@@ -788,14 +788,18 @@ static void analyze(const uint32_t *pixels, size_t count,
     *unique = distinct < 1024u ? distinct : 1024u;
 }
 
-int sc_v28_render_first_visible_frame(const SCV11Runtime *runtime,
-                                      unsigned output_width,
-                                      unsigned left_margin,
-                                      uint16_t *out555,
-                                      size_t cap555,
-                                      uint32_t *out32,
-                                      size_t cap32,
-                                      SCV28VideoReport *report) {
+static int render_lines_impl(const SCV11Runtime *runtime,
+                             unsigned output_width,
+                             unsigned left_margin,
+                             unsigned x_begin,
+                             unsigned x_end,
+                             uint16_t *out555,
+                             size_t cap555,
+                             uint32_t *out32,
+                             size_t cap32,
+                             SCV28VideoReport *report,
+                             int full_frame)
+{
     SCV28VideoReport result;
     unsigned y, x;
     uint8_t object_palette[SC_V28_MAX_FRAME_WIDTH];
@@ -803,9 +807,9 @@ int sc_v28_render_first_visible_frame(const SCV11Runtime *runtime,
     unsigned supported_lines = 0u;
     unsigned scanline_states = 0u;
     int expand_city_view;
+    size_t output_pixels = (size_t)output_width * SC_V11_VIDEO_HEIGHT;
 
     memset(&result, 0, sizeof(result));
-    size_t output_pixels = (size_t)output_width * SC_V11_VIDEO_HEIGHT;
     if (!runtime || !out555 || !out32 || !report ||
         output_width < SC_V28_FRAME_WIDTH ||
         output_width > SC_V28_MAX_FRAME_WIDTH ||
@@ -814,6 +818,13 @@ int sc_v28_render_first_visible_frame(const SCV11Runtime *runtime,
         (void)snprintf(result.error, sizeof(result.error),
             "render validation failed: width=%u margin=%u cap555=%zu cap32=%zu required=%zu",
             output_width, left_margin, cap555, cap32, output_pixels);
+        *report = result;
+        return 0;
+    }
+    if (x_begin > x_end || x_end > output_width) {
+        (void)snprintf(result.error, sizeof(result.error),
+            "render region invalid: %u-%u width=%u",
+            x_begin, x_end, output_width);
         *report = result;
         return 0;
     }
@@ -828,15 +839,12 @@ int sc_v28_render_first_visible_frame(const SCV11Runtime *runtime,
     result.main_screen_mask = current_reg(0x212cu);
     result.sub_screen_mask = current_reg(0x212du);
     result.color_math = current_reg(0x2131u);
-    memset(out555, 0, output_pixels * sizeof(*out555));
-    memset(out32, 0, output_pixels * sizeof(*out32));
 
-    /*
-     * Keep non-gameplay screens at the authentic 256-pixel presentation.
-     * The live city view has a stable PPU layout that is distinct from the
-     * title, setup, scenario, and modal screens.  Widening only this layout
-     * avoids exposing repeated menu tilemaps in the side margins.
-     */
+    if (full_frame) {
+        memset(out555, 0, output_pixels * sizeof(*out555));
+        memset(out32, 0, output_pixels * sizeof(*out32));
+    }
+
     expand_city_view = output_width > SC_V28_FRAME_WIDTH &&
         (current_reg(0x2105u) & 0x0fu) == 0x09u &&
         current_reg(0x2107u) == 0x58u &&
@@ -876,14 +884,12 @@ int sc_v28_render_first_visible_frame(const SCV11Runtime *runtime,
         if (display_top_y > max_display_top_y)
             display_top_y = max_display_top_y;
         if (expand_city_view) {
-            /* Anchor the native HUD at the physical left edge. World objects
-             * retain their map position through the separate camera shift. */
             object_left_margin = 0u;
             cursor_shift_x = native_camera_x - display_left_x;
             cursor_shift_y = native_camera_y - display_top_y;
         }
 
-        if (runtime->ppu_completed_frame == runtime->scheduler.frame &&
+        if (full_frame && runtime->ppu_completed_frame == runtime->scheduler.frame &&
             runtime->ppu_completed_line_state[y].valid &&
             runtime->ppu_completed_line_state[y].frame == runtime->scheduler.frame)
             scanline_states++;
@@ -900,7 +906,7 @@ int sc_v28_render_first_visible_frame(const SCV11Runtime *runtime,
         object_line(&view, y, output_width, object_left_margin,
                     cursor_shift_x, cursor_shift_y,
                     object_palette, object_priority_value);
-        for (x = 0u; x < output_width; ++x) {
+        for (x = x_begin; x < x_end; ++x) {
             int source_x = (int)x - (int)left_margin;
             int city_source_x = display_left_x + (int)x - native_camera_x;
             int city_source_y = display_top_y + (int)y - native_camera_y;
@@ -957,24 +963,57 @@ int sc_v28_render_first_visible_frame(const SCV11Runtime *runtime,
 
     result.reached_feature_set_supported =
         (uint8_t)(supported_lines == SC_V11_PPU_VISIBLE_LINES);
-    analyze(out32, output_pixels,
-            &result.nonblack_pixels, &result.unique_colors);
-    if (sc_core_logging_enabled()) {
-        sc_sha256_bytes((const unsigned char *)out555,
-                        output_pixels * sizeof(*out555),
-                        result.bgr555_sha256);
-        sc_sha256_bytes((const unsigned char *)out32,
-                        output_pixels * sizeof(*out32),
-                        result.bgra_sha256);
-    }
-    if (scanline_states != 0u && scanline_states != SC_V11_PPU_VISIBLE_LINES) {
-        (void)snprintf(result.error, sizeof(result.error),
-            "incomplete PPU scanline state frame=%u lines=%u/224",
-            runtime->scheduler.frame, scanline_states);
-        *report = result;
-        return 0;
+    if (full_frame) {
+        analyze(out32, output_pixels,
+                &result.nonblack_pixels, &result.unique_colors);
+        if (sc_core_logging_enabled()) {
+            sc_sha256_bytes((const unsigned char *)out555,
+                            output_pixels * sizeof(*out555),
+                            result.bgr555_sha256);
+            sc_sha256_bytes((const unsigned char *)out32,
+                            output_pixels * sizeof(*out32),
+                            result.bgra_sha256);
+        }
+        if (scanline_states != 0u && scanline_states != SC_V11_PPU_VISIBLE_LINES) {
+            (void)snprintf(result.error, sizeof(result.error),
+                "incomplete PPU scanline state frame=%u lines=%u/224",
+                runtime->scheduler.frame, scanline_states);
+            *report = result;
+            return 0;
+        }
     }
     result.passed = 1u;
     *report = result;
     return 1;
+}
+
+
+int sc_v28_render_first_visible_frame(const SCV11Runtime *runtime,
+                                      unsigned output_width,
+                                      unsigned left_margin,
+                                      uint16_t *out555,
+                                      size_t cap555,
+                                      uint32_t *out32,
+                                      size_t cap32,
+                                      SCV28VideoReport *report) {
+    return render_lines_impl(runtime, output_width, left_margin,
+                             0u, output_width,
+                             out555, cap555, out32, cap32,
+                             report, 1);
+}
+
+int sc_v28_render_first_visible_frame_columns(const SCV11Runtime *runtime,
+                                              unsigned output_width,
+                                              unsigned left_margin,
+                                              unsigned x_begin,
+                                              unsigned x_end,
+                                              uint16_t *bgr555,
+                                              size_t bgr555_capacity,
+                                              uint32_t *bgra,
+                                              size_t bgra_capacity,
+                                              SCV28VideoReport *report) {
+    return render_lines_impl(runtime, output_width, left_margin,
+                             x_begin, x_end,
+                             bgr555, bgr555_capacity, bgra, bgra_capacity,
+                             report, 0);
 }

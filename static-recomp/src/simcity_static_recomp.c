@@ -540,8 +540,12 @@ static int render_current_frame(SimCityRecomp *instance, char *error,
     int16_t scroll_x = (int16_t)m->mmio[0x210D];
     int16_t scroll_y = (int16_t)m->mmio[0x210E];
 
-    /* Scroll‑only fast path: only the scroll registers changed. */
-    if (instance->last_scroll_valid &&
+    /* Scroll-only fast path disabled: the old shift-based path produced
+       incorrect image accumulation (smear) and the sign/camera tracking
+       are unreliable in widescreen expand_city_view. Replaced with the
+       full render below; region strip rendering is left for a future
+       correct fast path. */
+    if (0 && instance->last_scroll_valid &&
         instance->last_render_hash_no_scroll == h_no_scroll) {
         int16_t dx = scroll_x - instance->last_scroll_x;
         int16_t dy = scroll_y - instance->last_scroll_y;
