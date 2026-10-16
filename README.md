@@ -7,6 +7,29 @@ platforms.
 The original game ROM is not included. Use an externally supplied, legally
 obtained ROM matching `ROM-REQUIREMENTS.txt`.
 
+## Screenshots
+
+The Linux frontend running the live city in Wide Screen. The extra map is real
+city data on both sides, and the HUD and construction toolbar sit on the native
+columns the guest placed them on.
+
+![The city view in Wide Screen, with the construction toolbar on the left edge](docs/images/city.png)
+
+The settings overlay opens over the game frame — no second window, no font
+library, nothing to install but SDL2.
+
+![The F1 settings overlay](docs/images/menu-settings.png)
+
+Cheats have their own submenu, because freezing money is not a display setting
+and burying it under mouse sensitivity made it easy to toggle by accident.
+
+![The F1 cheats submenu](docs/images/menu-cheats.png)
+
+These are captured from the real frontend by
+`scripts/capture-screenshots.py`, which runs it on a virtual display and drives
+it with synthetic input — the images are not mock-ups and cannot drift from
+what ships.
+
 ## What fully static recompilation means
 
 SimCity's executable W65C816 game instructions were analysed and translated
@@ -396,6 +419,36 @@ dist/linux/run.sh rom.sfc --size 1280x800 --widescreen --soft-mouse
 
 Plain `cmake` remains the source of truth if you would rather drive the build
 yourself.
+
+### Prebuilt binaries, and where they belong
+
+A prebuilt Linux binary is **safe to distribute**: it carries no game data.
+`scripts/make-release.sh` does not assert that, it proves it. Given the ROM, it
+checks that no 4 KiB slice of the ROM appears anywhere in the binary, that there
+are no large repetitive regions suggesting embedded data, that the binary
+refuses to start without a ROM, and that it rejects a correctly-sized file with
+the wrong contents:
+
+```
+ok  nenhuma das 33 fatias de 4096 bytes da ROM aparece no binario
+ok  sem regioes grandes e repetitivas que sugiram dados embutidos
+ok  recusa arrancar sem ROM (pede --rom)
+ok  rejeita um ficheiro de tamanho certo mas conteudo errado
+O binario pode ser distribuido: nao contem dados do jogo.
+```
+
+It writes `dist/linux/simcity-linux`, a `.sha256`, and a `release.json`
+recording `"requires_rom": true` and `"rom_shipped": false`.
+
+**These artifacts are deliberately not committed to git.** `build*/` and
+`dist/` are ignored, and that is the right place for them: a 9 MB executable in
+history is permanent bloat that cannot be cleanly withdrawn later, it cannot be
+reviewed, and it goes stale against the sources it was built from. Ship binaries
+through `make release` or a GitHub Release, and let `release.json` carry the
+proof.
+
+The ROM stays external and unmodified. That is the project's release invariant
+(`Wide Screen - 1.4.0.txt`) and this does not change it.
 
 ## Performance notes (measured)
 
