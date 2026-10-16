@@ -311,12 +311,55 @@ static uint16_t city_map_tile_entry(unsigned layer, int map_x, int map_y) {
                        SC_CITY_BG2_TABLE) + (uint32_t)code * 2u);
 }
 
-static int city_background_pixel(const PpuLineView *view, unsigned layer,
+/* Per-line constants for the widened city sampler. The four WRAM reads for
+   the camera origin and the sub-cell offsets are identical for every pixel of
+   a scanline, as are the per-layer constants, and city_background_pixel runs
+   about 170k times per frame in this view. */
+typedef struct {
+    unsigned valid;
+    unsigned bpp;
+    uint32_t char_base;
+    unsigned mosaic_size;
+    uint8_t mosaic_enable;
+} CityBgSetup;
+
+typedef struct {
+    int world_x_base;   /* camera cell origin * 8 + sub-cell offset */
+    int world_y_base;
+    CityBgSetup layer[2];
+} CityLineSetup;
+
+static void city_line_setup(const PpuLineView *view, unsigned mode,
+                            CityLineSetup *out) {
+    unsigned l;
+    out->world_x_base =
+        (int)(int16_t)read_wram16(SC_CITY_VIEW_X_OFFSET) * 8 +
+        (int)(read_wram16(SC_CITY_FINE_X_OFFSET) & 7u);
+    out->world_y_base =
+        (int)(int16_t)read_wram16(SC_CITY_VIEW_Y_OFFSET) * 8 +
+        (int)(read_wram16(SC_CITY_FINE_Y_OFFSET) & 7u);
+    for (l = 0u; l < 2u; ++l) {
+        CityBgSetup *b = &out->layer[l];
+        uint8_t nba;
+        memset(b, 0, sizeof(*b));
+        b->bpp = bg_bpp(mode, l);
+        if (l > 1u || b->bpp == 0u) continue;
+        nba = view_reg(view, l < 2u ? 0x210bu : 0x210cu);
+        b->char_base = (uint32_t)((l & 1u) ? (nba >> 4) : (nba & 15u)) << 13;
+        b->mosaic_size = ((unsigned)view_reg(view, 0x2106u) >> 4) + 1u;
+        b->mosaic_enable =
+            (uint8_t)((view_reg(view, 0x2106u) & (1u << l)) != 0u);
+        b->valid = 1u;
+    }
+}
+
+static int city_background_pixel(const PpuLineView *view,
+                                 const CityLineSetup *cs,
+                                 unsigned layer,
                                  int city_source_x, int y,
                                  PpuPixel *pixel) {
     unsigned mode = view_reg(view, 0x2105u) & 7u;
-    unsigned bpp = bg_bpp(mode, layer);
-    uint8_t nba;
+    unsigned bpp = cs->layer[layer].bpp;
     uint32_t char_base;
     int map_x;
     int map_y;
@@ -341,8 +384,8 @@ static int city_background_pixel(const PpuLineView *view, unsigned layer,
     pixel->transparent = 1u;
     if (layer > 1u || bpp == 0u) return 1;
 
-    mosaic_size = ((unsigned)view_reg(view, 0x2106u) >> 4) + 1u;
-    if ((view_reg(view, 0x2106u) & (1u << layer)) && mosaic_size > 1u) {
+    mosaic_size = cs->layer[layer].mosaic_size;
+    if (cs->layer[layer].mosaic_enable && mosaic_size > 1u) {
         sample_x -= (int)wrap_coordinate(sample_x, mosaic_size);
         sample_y -= (int)wrap_coordinate(sample_y, mosaic_size);
     }
@@ -354,12 +397,8 @@ static int city_background_pixel(const PpuLineView *view, unsigned layer,
      * authoritative map instead.  $01BD/$01BF are the top-left map cell and
      * $0139/$0137 provide the sub-cell camera position.
      */
-    view_x = (int)(int16_t)read_wram16(SC_CITY_VIEW_X_OFFSET);
-    view_y = (int)(int16_t)read_wram16(SC_CITY_VIEW_Y_OFFSET);
-    world_x = view_x * 8 +
-              (int)(read_wram16(SC_CITY_FINE_X_OFFSET) & 7u) + sample_x;
-    world_y = view_y * 8 +
-              (int)(read_wram16(SC_CITY_FINE_Y_OFFSET) & 7u) + (int)sample_y;
+    world_x = cs->world_x_base + sample_x;
+    world_y = cs->world_y_base + (int)sample_y;
 
     /* Floor-divide and wrap by 8 with shifts: the quotient is arithmetic
        shift right by 3, and wrap_coordinate by a power of two is a mask. */
@@ -373,10 +412,7 @@ static int city_background_pixel(const PpuLineView *view, unsigned layer,
     if (entry & 0x4000u) px = 7u - px;
     if (entry & 0x8000u) py = 7u - py;
 
-    nba = view_reg(view, layer < 2u ? 0x210bu : 0x210cu);
-    char_base = (uint32_t)((layer & 1u) ? (nba >> 4) :
-                           (nba & 15u)) << 13;
-    row_address = char_base + (uint32_t)tile * (bpp * 8u) + py * 2u;
+    row_address = cs->layer[layer].char_base + (uint32_t)tile * (bpp * 8u) + py * 2u;
     bit = 7u - px;
     for (plane = 0u; plane < bpp; ++plane) {
         uint32_t address = row_address + (plane >> 1) * 16u + (plane & 1u);
@@ -792,6 +828,7 @@ static PpuPixel screen_pixel(const PpuLineView *view, const BgLineSetup *bg,
 
 static PpuPixel city_screen_pixel(const PpuLineView *view,
                                   const BgLineSetup *bg,
+                                  const CityLineSetup *cs,
                                   unsigned screen_mask,
                                   unsigned window_enable,
                                   int source_x, int city_source_x,
@@ -822,7 +859,7 @@ static PpuPixel city_screen_pixel(const PpuLineView *view,
             window_mask(view, layer, effect_x))
             continue;
         if (layer < 2u) {
-            if (!city_background_pixel(view, layer, city_source_x,
+            if (!city_background_pixel(view, cs, layer, city_source_x,
                                        city_source_y,
                                        &candidate))
                 continue;
@@ -907,6 +944,7 @@ static int render_lines_impl(const SCV11Runtime *runtime,
     uint8_t object_palette[SC_V28_MAX_FRAME_WIDTH];
     uint8_t object_priority_value[SC_V28_MAX_FRAME_WIDTH];
     BgLineSetup bg_setups[4];
+    CityLineSetup city_setup;
     unsigned supported_lines = 0u;
     unsigned scanline_states = 0u;
     int expand_city_view;
@@ -1016,9 +1054,10 @@ static int render_lines_impl(const SCV11Runtime *runtime,
 
         {
             unsigned l;
+            unsigned line_mode = view_reg(&view, 0x2105u) & 7u;
             for (l = 0u; l < 4u; ++l)
-                bg_line_setup(&view, l, view_reg(&view, 0x2105u) & 7u,
-                              &bg_setups[l]);
+                bg_line_setup(&view, l, line_mode, &bg_setups[l]);
+            city_line_setup(&view, line_mode, &city_setup);
         }
         object_line(&view, y, output_width, object_left_margin,
                     cursor_shift_x, cursor_shift_y, sprite_shift_x,
@@ -1036,7 +1075,7 @@ static int render_lines_impl(const SCV11Runtime *runtime,
                 in_margin)
                 continue;
             PpuPixel main_pixel = expand_city_view
-                ? city_screen_pixel(&view, bg_setups, main_mask, main_windows,
+                ? city_screen_pixel(&view, bg_setups, &city_setup, main_mask, main_windows,
                                     (int)x, city_source_x, city_source_y, y,
                                     object_palette[x], object_priority_value[x])
                 : screen_pixel(&view, bg_setups, main_mask, main_windows, source_x, y,
@@ -1052,7 +1091,7 @@ static int render_lines_impl(const SCV11Runtime *runtime,
             if (clip_main) color = 0u;
             if (cgwsel & 0x02u) {
                 sub_pixel = expand_city_view
-                    ? city_screen_pixel(&view, bg_setups, sub_mask, sub_windows,
+                    ? city_screen_pixel(&view, bg_setups, &city_setup, sub_mask, sub_windows,
                                         (int)x, city_source_x, city_source_y, y,
                                         object_palette[x],
                                         object_priority_value[x])
