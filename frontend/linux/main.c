@@ -576,31 +576,18 @@ uploaded:
 
     SDL_RenderClear(g_renderer);
 
-    /*
-     * Present at the largest whole-number scale that fits, centred, with
-     * nearest sampling. Stretching the frame to fill the window both distorts
-     * the aspect ratio (398x239 is 1.67:1, a 4:3 window is 1.33:1) and, with
-     * linear filtering, turns every pixel into a blur. An integer scale keeps
-     * each guest pixel as a sharp square and leaves the aspect correct; the
-     * leftover border is filled by the SDL_RenderClear above.
-     */
+    /* Render texture scaled to window size, filling the whole window.
+     *
+     * Letterboxing this at an integer scale was tried and reverted: the
+     * uncovered border was left as bare window background, and worse,
+     * soft_mouse_sample() maps host pointer coordinates linearly onto texture
+     * coordinates, which an offset and a scale both invalidate. That broke
+     * the in-game menus under pointer control. Nearest sampling is kept so
+     * pixels stay sharp. */
     int w, h;
-    int tex_height = SIMCITY_RECOMP_FRAME_HEIGHT;
     SDL_GetWindowSize(g_window, &w, &h);
 
-    SDL_Rect dst;
-    if (tex_width > 0 && tex_height > 0 && w > 0 && h > 0) {
-        int scale = w / (int)tex_width;
-        int by_height = h / (int)tex_height;
-        if (by_height < scale) scale = by_height;
-        if (scale < 1) scale = 1;
-        dst.w = (int)tex_width * scale;
-        dst.h = (int)tex_height * scale;
-        dst.x = (w - dst.w) / 2;
-        dst.y = (h - dst.h) / 2;
-    } else {
-        dst.x = 0; dst.y = 0; dst.w = w; dst.h = h;
-    }
+    SDL_Rect dst = {0, 0, w, h};
     SDL_RenderCopy(g_renderer, g_texture, NULL, &dst);
 
     /* Deliberately does NOT present. The menu path draws the overlay on top of
@@ -960,9 +947,26 @@ int main(int argc, char **argv)
         next_deadline += frame_period;
         Uint64 now_perf = SDL_GetPerformanceCounter();
         if (now_perf < next_deadline) {
-            Uint32 wait_ms = (Uint32)(((next_deadline - now_perf) * 1000u)
-                                      / (perf_freq ? perf_freq : 1000u));
-            if (wait_ms > 0u) SDL_Delay(wait_ms);
+            /*
+             * Wait out the remaining time without overshooting the deadline.
+             *
+             * SDL_Delay only takes whole milliseconds and routinely overshoots,
+             * which used to be harmless because emulation ran past the frame
+             * budget and the loop was always behind anyway. Now that a frame
+             * costs about 14 ms against a 16.6 ms period, the loop is under
+             * budget and a single SDL_Delay overshoot makes frames arrive in
+             * bursts, which is audible as a dragging or uneven soundtrack.
+             *
+             * SDL_Delay(1) is coarse too, so spin on the performance counter
+             * for the last slice. The spin is bounded to well under a
+             * millisecond and only runs on the frame that actually has slack.
+             */
+            Uint64 remaining = next_deadline - now_perf;
+            Uint64 coarse = (remaining * 1000u) / (perf_freq ? perf_freq : 1000u);
+            if (coarse > 1u) SDL_Delay((Uint32)(coarse - 1u));
+            while (SDL_GetPerformanceCounter() < next_deadline) {
+                /* spin */
+            }
         } else {
             /* Behind schedule: resynchronise instead of accumulating debt. */
             next_deadline = now_perf;
