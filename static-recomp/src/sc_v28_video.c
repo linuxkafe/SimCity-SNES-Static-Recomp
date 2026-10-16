@@ -313,10 +313,12 @@ static int city_background_pixel(const PpuLineView *view, unsigned layer,
     world_y = view_y * 8 +
               (int)(read_wram16(SC_CITY_FINE_Y_OFFSET) & 7u) + (int)sample_y;
 
-    map_x = world_x >= 0 ? world_x / 8 : -((7 - world_x) / 8);
-    map_y = world_y >= 0 ? world_y / 8 : -((7 - world_y) / 8);
-    px = wrap_coordinate(world_x, 8u);
-    py = wrap_coordinate(world_y, 8u);
+    /* Floor-divide and wrap by 8 with shifts: the quotient is arithmetic
+       shift right by 3, and wrap_coordinate by a power of two is a mask. */
+    map_x = world_x >> 3;
+    map_y = world_y >> 3;
+    px = (unsigned)(world_x & 7);
+    py = (unsigned)(world_y & 7);
     entry = city_map_tile_entry(layer, map_x, map_y);
     tile = (uint16_t)(entry & 0x03ffu);
     palette_group = (uint8_t)((entry >> 10) & 7u);
