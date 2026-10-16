@@ -134,26 +134,37 @@ static int nav_pressed(SimCityMenu *menu, uint16_t mask, uint16_t bit)
     return (mask & bit) != 0 && (menu->prev_input & bit) == 0;
 }
 
-/* True when a held direction should step again: not until the initial delay
-   has passed, then at a fixed rate. Without this the selection advanced one row
-   per frame while the key was down. */
-static int nav_repeats(SimCityMenu *menu, uint16_t mask, uint16_t bit)
+/* Returns a signed step for one navigation axis: -1 up, +1 down, 0 none. Fires
+   once on the press edge, then repeats after the initial delay at a fixed rate.
+   Each axis keeps its own hold/step timestamps (index 0 = up, 1 = down) so the
+   state of one direction can never disturb the other's repeat timer. Without
+   this the selection advanced one row per frame while a key was down, and an
+   idle axis reset the held axis's timer so hold-to-repeat never fired. */
+static int nav_axis(SimCityMenu *menu, uint16_t mask, uint16_t bit, int index)
 {
-    Uint32 now, elapsed;
+    Uint32 now;
 
     if ((mask & bit) == 0) {
-        menu->hold_started_ms = 0;
+        menu->axis_hold_ms[index] = 0;
         return 0;
     }
     now = SDL_GetTicks();
-    if (menu->hold_started_ms == 0) {
-        menu->hold_started_ms = now;
-        return 0;               /* this is the initial press */
+    if ((menu->prev_input & bit) == 0 || menu->axis_hold_ms[index] == 0) {
+        menu->axis_hold_ms[index] = now;
+        menu->axis_last_ms[index] = now;
+        return (index == 0) ? -1 : 1;
     }
-    elapsed = now - menu->hold_started_ms;
-    if (elapsed < SIMCITY_MENU_REPEAT_DELAY_MS) return 0;
-    if (now - menu->last_step_ms < SIMCITY_MENU_REPEAT_RATE_MS) return 0;
-    return 1;
+    if (now - menu->axis_hold_ms[index] < SIMCITY_MENU_REPEAT_DELAY_MS) return 0;
+    if (now - menu->axis_last_ms[index] < SIMCITY_MENU_REPEAT_RATE_MS) return 0;
+    menu->axis_last_ms[index] = now;
+    return (index == 0) ? -1 : 1;
+}
+
+/* Combined vertical step for the up/down pair. */
+static int nav_vertical(SimCityMenu *menu, uint16_t mask)
+{
+    return nav_axis(menu, mask, SIMCITY_INPUT_UP, 0) +
+           nav_axis(menu, mask, SIMCITY_INPUT_DOWN, 1);
 }
 
 static void cheats_adjust(SimCityMenu *menu, int direction)
@@ -189,25 +200,16 @@ static void cheats_adjust(SimCityMenu *menu, int direction)
 
 static SimCityMenuAction cheats_input(SimCityMenu *menu, uint16_t input_mask)
 {
-    int now_step = nav_pressed(menu, input_mask, SIMCITY_INPUT_UP) ||
-                   nav_repeats(menu, input_mask, SIMCITY_INPUT_UP) ||
-                   nav_pressed(menu, input_mask, SIMCITY_INPUT_DOWN) ||
-                   nav_repeats(menu, input_mask, SIMCITY_INPUT_DOWN);
-    if (nav_pressed(menu, input_mask, SIMCITY_INPUT_UP) ||
-        nav_repeats(menu, input_mask, SIMCITY_INPUT_UP)) {
+    int step = nav_vertical(menu, input_mask);
+    if (step < 0) {
         menu->cheat_selected =
             (menu->cheat_selected + SIMCITY_CHEATS_COUNT - 1) % SIMCITY_CHEATS_COUNT;
-        menu->last_step_ms = SDL_GetTicks();
-    }
-    if (nav_pressed(menu, input_mask, SIMCITY_INPUT_DOWN) ||
-        nav_repeats(menu, input_mask, SIMCITY_INPUT_DOWN)) {
+    } else if (step > 0) {
         menu->cheat_selected =
             (menu->cheat_selected + 1) % SIMCITY_CHEATS_COUNT;
-        menu->last_step_ms = SDL_GetTicks();
     }
-    (void)now_step;
 
-    if (input_mask & SIMCITY_INPUT_B) {
+    if (nav_pressed(menu, input_mask, SIMCITY_INPUT_B)) {
         switch ((SimCityCheatRow)menu->cheat_selected) {
             case SIMCITY_CHEATS_MONEY:
                 menu->money_applied = 1;
@@ -239,7 +241,7 @@ static SimCityMenuAction cheats_input(SimCityMenu *menu, uint16_t input_mask)
                 break;
         }
     }
-    if (input_mask & SIMCITY_INPUT_A) {
+    if (nav_pressed(menu, input_mask, SIMCITY_INPUT_A)) {
         menu->in_cheats = 0;
     }
     return SIMCITY_MENU_ACTION_NONE;
@@ -261,15 +263,12 @@ SimCityMenuAction simcity_menu_handle_input(SimCityMenu *menu, uint16_t input_ma
 
     row = menu->selected;
 
-    if (nav_pressed(menu, input_mask, SIMCITY_INPUT_UP) ||
-        nav_repeats(menu, input_mask, SIMCITY_INPUT_UP)) {
-        menu->selected = (row > 0) ? row - 1 : ROW_COUNT - 1;
-        menu->last_step_ms = SDL_GetTicks();
-    }
-    if (nav_pressed(menu, input_mask, SIMCITY_INPUT_DOWN) ||
-        nav_repeats(menu, input_mask, SIMCITY_INPUT_DOWN)) {
-        menu->selected = (row + 1) % ROW_COUNT;
-        menu->last_step_ms = SDL_GetTicks();
+    {
+        int step = nav_vertical(menu, input_mask);
+        if (step < 0)
+            menu->selected = (row > 0) ? row - 1 : ROW_COUNT - 1;
+        else if (step > 0)
+            menu->selected = (row + 1) % ROW_COUNT;
     }
 
     /* Adjustments are edge-triggered: holding right must not run the value to
@@ -361,22 +360,18 @@ static void draw_cheats(SimCityMenu *menu, int window_w, int window_h)
     static const SDL_Color kValue = { 120, 200, 255, 255 };
     static const SDL_Color kSelBg = { 40, 40, 40, 255 };
 
-    const int panel_h_base = 40 + SIMCITY_CHEATS_COUNT * 22 + 34;
+    const int content_rows = 14 + 22 + SIMCITY_CHEATS_COUNT * 18;
     int panel_w, panel_h, x0, y0, y, i, sc = 1;
     char value[32];
 
-    sc = window_h / 200;
-    if (sc < 1) sc = 1;
-    if (sc > 4) sc = 4;
-    while (sc > 1 && (380 * sc > window_w - 20 ||
-                      panel_h_base * sc > window_h - 20)) {
-        sc--;
-    }
+    /* Full-screen overlay, matching the settings menu. Scale up as far as the
+       window allows so the 13 cheat rows stay readable on a Deck screen. */
+    while (sc < 4 && (content_rows * (sc + 1) + 30 <= window_h)) sc++;
 
-    panel_w = 380 * sc;
-    panel_h = panel_h_base * sc;
-    x0 = (window_w - panel_w) / 2;
-    y0 = (window_h - panel_h) / 2;
+    panel_w = window_w;
+    panel_h = window_h;
+    x0 = 0;
+    y0 = 0;
 
     simcity_gui_set_scale(&menu->gui, sc);
     simcity_gui_set_colors(&menu->gui, kText, kPanel);
@@ -393,7 +388,7 @@ static void draw_cheats(SimCityMenu *menu, int window_w, int window_h)
         if (i == menu->cheat_selected) {
             simcity_gui_set_colors(&menu->gui, kValue, kSelBg);
             simcity_gui_fill_rect(&menu->gui, x0 + 8 * sc, y - 3 * sc,
-                                  panel_w - 16 * sc, 15);
+                                  panel_w - 16 * sc, 15 * sc);
         } else {
             simcity_gui_set_colors(&menu->gui, kText, kPanel);
         }
@@ -449,6 +444,10 @@ static void draw_cheats(SimCityMenu *menu, int window_w, int window_h)
         }
         y += 18 * sc;
     }
+
+    simcity_gui_set_colors(&menu->gui, kValue, kPanel);
+    simcity_gui_text_centered(&menu->gui, window_w / 2, panel_h - 12 * sc,
+                              "ARROWS MOVE   B SELECT/TOGGLE   X BACK");
 }
 
 void simcity_menu_draw(SimCityMenu *menu, int window_w, int window_h)
@@ -462,7 +461,6 @@ void simcity_menu_draw(SimCityMenu *menu, int window_w, int window_h)
     static const SDL_Color kValue = { 120, 200, 255, 255 };
     static const SDL_Color kSelBg = { 40, 40, 40, 255 };
 
-    const int panel_h_base = 40 + ROW_COUNT * 22 + 34;
     int panel_w, panel_h, x0, y0, y, i, menu_scale = 1;
     char value[32];
 
@@ -492,7 +490,7 @@ void simcity_menu_draw(SimCityMenu *menu, int window_w, int window_h)
             simcity_gui_set_colors(&menu->gui, kValue, kSelBg);
             simcity_gui_fill_rect(&menu->gui, x0 + 8 * menu_scale,
                                   y - 3 * menu_scale,
-                                  panel_w - 16 * menu_scale, 15);
+                                  panel_w - 16 * menu_scale, 15 * menu_scale);
         } else {
             simcity_gui_set_colors(&menu->gui, kText, kPanel);
         }

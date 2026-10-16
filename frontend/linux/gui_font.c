@@ -135,7 +135,7 @@ void simcity_gui_fill_rect(SimCityGui *gui, int x, int y, int w, int h)
     if (!gui->renderer || w <= 0 || h <= 0) return;
     SDL_SetRenderDrawColor(gui->renderer, gui->background.r, gui->background.g,
                            gui->background.b, gui->background.a);
-    r.x = x; r.y = y; r.w = w * gui->scale; r.h = h * gui->scale;
+    r.x = x; r.y = y; r.w = w; r.h = h;
     SDL_RenderFillRect(gui->renderer, &r);
 }
 
@@ -145,12 +145,12 @@ void simcity_gui_frame_rect(SimCityGui *gui, int x, int y, int w, int h)
     if (!gui->renderer || w <= 2 || h <= 2) return;
     SDL_SetRenderDrawColor(gui->renderer, gui->foreground.r, gui->foreground.g,
                            gui->foreground.b, gui->foreground.a);
-    r.x = x; r.y = y; r.w = w * gui->scale; r.h = gui->scale;
+    r.x = x; r.y = y; r.w = w; r.h = gui->scale;
     SDL_RenderDrawRect(gui->renderer, &r);
-    r.y = y + h * gui->scale - gui->scale; SDL_RenderDrawRect(gui->renderer, &r);
-    r.x = x; r.y = y; r.w = gui->scale; r.h = h * gui->scale;
+    r.y = y + h - gui->scale; SDL_RenderDrawRect(gui->renderer, &r);
+    r.x = x; r.y = y; r.w = gui->scale; r.h = h;
     SDL_RenderDrawRect(gui->renderer, &r);
-    r.x = x + w * gui->scale - gui->scale; SDL_RenderDrawRect(gui->renderer, &r);
+    r.x = x + w - gui->scale; SDL_RenderDrawRect(gui->renderer, &r);
 }
 
 int simcity_gui_text(SimCityGui *gui, int x, int y, const char *text)

@@ -52,7 +52,6 @@ typedef struct {
     int demolish_anything;
     int renderer;   /* SimCityRenderer */
     int color_mode; /* SimCityColorMode */
-    int loading_skip_frames; /* frames to skip render during loading screen */
 } SimCityLinuxConfig;
 
 void simcity_linux_config_defaults(SimCityLinuxConfig *config);

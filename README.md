@@ -90,7 +90,7 @@ holds the native 60.0988 Hz frame cadence at 1280x800 with widescreen on.
 | `--resolution <N>` | 0-3 | 0 (480p) | 0=480p, 1=720p, 2=800p, 3=1080p |
 | `--size <WxH>` | e.g. `1280x800` | — | Arbitrary window size; overrides `--resolution` |
 | `--widescreen` | flag | off | Enable 398x239 core widescreen output |
-| `--soft-mouse` | flag | off | Drive the guest d-pad cursor from the host pointer |
+| `--soft-mouse` | flag | on | Drive the guest d-pad cursor from the host pointer (on by default; the flag is now redundant but kept for compatibility) |
 | `--mouse-sens <N>` | 1-64 | 2 | Soft-mouse threshold, texture px per frame |
 
 ### Settings menu

@@ -40,6 +40,8 @@ int simcity_gui_text_centered(SimCityGui *gui, int cx, int y, const char *text);
 /* Width in renderer pixels at the given integer scale. */
 int simcity_gui_text_width_scaled(const char *text, int scale);
 
+/* Fills / outlines a rectangle. All four arguments are renderer pixels; only
+   the outline's stroke width follows the current scale. */
 void simcity_gui_fill_rect(SimCityGui *gui, int x, int y, int w, int h);
 void simcity_gui_frame_rect(SimCityGui *gui, int x, int y, int w, int h);
 void simcity_gui_set_colors(SimCityGui *gui, SDL_Color fg, SDL_Color bg);

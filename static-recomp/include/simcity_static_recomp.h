@@ -159,8 +159,6 @@ uint32_t simcity_recomp_frame_width(const SimCityRecomp *instance);
 int simcity_recomp_widescreen_enabled(const SimCityRecomp *instance);
 int simcity_recomp_set_widescreen(SimCityRecomp *instance, int enabled,
                                    char *error, size_t error_capacity);
-int simcity_recomp_set_loading_skip_frames(SimCityRecomp *instance, int frames,
-                                           char *error, size_t error_capacity);
 uint32_t simcity_recomp_current_frame(const SimCityRecomp *instance);
 uint64_t simcity_recomp_instruction_count(const SimCityRecomp *instance);
 uint64_t simcity_recomp_master_clock(const SimCityRecomp *instance);

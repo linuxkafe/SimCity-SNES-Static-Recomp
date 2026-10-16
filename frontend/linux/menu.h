@@ -66,10 +66,12 @@ typedef struct {
     int cheat_selected;
 
     /* Edge detection for navigation. prev_input is last frame's mask; the
-       timestamps are when the held direction started and when it last stepped. */
+       per-axis timestamps track when each held direction started (index 0 = up,
+       1 = down) and when it last stepped. Kept separate per direction so one
+       held axis cannot reset the other's repeat timer. */
     uint16_t prev_input;
-    Uint32 hold_started_ms;
-    Uint32 last_step_ms;
+    Uint32 axis_hold_ms[2];
+    Uint32 axis_last_ms[2];
 } SimCityMenu;
 
 /* Resolution presets cycled by the RESOLUTION row. Index order matches

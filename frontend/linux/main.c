@@ -172,15 +172,6 @@ static void apply_config_to_frontend(void)
                 fprintf(stderr, "widescreen change failed: %s\n", ws_error);
             simcity_menu_res_size(SIMCITY_MENU_RES_COUNT - 1, &w, &h);
         }
-        /* Apply loading skip frames setting. */
-        {
-            char ls_error[256];
-            memset(ls_error, 0, sizeof(ls_error));
-            if (simcity_recomp_set_loading_skip_frames(g_recomp,
-                                                        g_config.loading_skip_frames,
-                                                        ls_error, sizeof(ls_error)) != 1)
-                fprintf(stderr, "loading skip frames change failed: %s\n", ls_error);
-        }
         /* Texture geometry follows the widescreen flag. */
         {
             int tw = g_config.widescreen ? SIMCITY_RECOMP_WIDESCREEN_WIDTH
@@ -536,12 +527,12 @@ static void render_frame(void)
                         ? SIMCITY_RECOMP_WIDESCREEN_WIDTH
                         : SIMCITY_RECOMP_FRAME_WIDTH;
 
-    /* ColorMode.  NORMAL uploads the core's bytes untouched, which every
-       automated check agrees is correct.  SWAP_RB exchanges the red and blue
-       byte of each pixel into a scratch buffer first; it exists because a
-       transposed picture has been reported on the desktop compositor and
-       could not be reproduced or disproved from a captured frame, so the
-       choice is left to the player on the affected machine. */
+    /* ColorMode.  SWAP_RB is the default and is right on real hardware: the
+       picture reads correctly on the Steam Deck and on a second desktop Linux
+       machine, while NORMAL shows red and blue transposed.  NORMAL uploads the
+       core's bytes untouched; SWAP_RB exchanges the red and blue byte of each
+       pixel into a scratch buffer first.  The menu and settings.ini let a
+       player switch if a particular display is wired the other way. */
     if (g_config.color_mode == SIMCITY_COLOR_SWAP_RB) {
         uint32_t n = (uint32_t)(tex_width * SIMCITY_RECOMP_FRAME_HEIGHT);
         if (!g_swap_buffer || g_swap_capacity < n) {
