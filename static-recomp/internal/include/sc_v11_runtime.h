@@ -3,6 +3,7 @@
 #include "sc_machine.h"
 #include "sc_audio_transport.h"
 #include <stddef.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 #define SC_V11_ROM_SIZE 524288u
@@ -142,6 +143,11 @@ typedef struct SCV11Runtime {
      * Covers full logical 1024×1024 tilemap; actual BG tilemap is smaller (32×32 or 64×64).
      * Bit set = corresponding 8×8 tile was written this frame. */
     uint8_t vram_dirty_tiles[16384];
+    /* VRAM write buffer for batching sequential writes during tile-map upload */
+    uint32_t vram_write_buffer_base;
+    uint16_t vram_write_buffer_len;
+    uint8_t vram_write_buffer_data[4096];
+    bool vram_write_buffer_active;
 } SCV11Runtime;
 
 
@@ -156,6 +162,7 @@ uint8_t sc_v11_bus_read8(SCV11Runtime*,uint32_t); uint16_t sc_v11_bus_read16(SCV
 void sc_v11_bus_write8(SCV11Runtime*,uint32_t,uint8_t); void sc_v11_bus_write16(SCV11Runtime*,uint32_t,uint16_t);
 void sc_v11_vram_mark_tile_dirty(SCV11Runtime*,uint16_t); void sc_v11_vram_mark_range_dirty(SCV11Runtime*,uint16_t,uint16_t);
 void sc_v11_vram_clear_dirty(SCV11Runtime*);
+void sc_v11_vram_write_flush(SCV11Runtime *runtime);
 uint8_t sc_v11_bus_speed(uint32_t,uint8_t); void sc_v11_scheduler_advance(SCV11Runtime*,uint32_t);
 void sc_v11_scheduler_code_access(SCV11Runtime*,uint32_t,unsigned); void sc_v11_scheduler_internal_cycle(SCV11Runtime*,unsigned);
 void sc_v11_scheduler_program_bus_cycle(SCV11Runtime*,uint32_t); void sc_v11_scheduler_idle_or_read(SCV11Runtime*); void sc_v11_scheduler_cpu_cycle_sample(SCV11Runtime*);
