@@ -120,10 +120,13 @@ In the cheats submenu, **B** confirms a one-shot action or toggles the selected
 value row, and **X** (A on the pad) goes back. Both are edge-triggered, so
 holding B toggles once rather than flipping every frame.
 
-The frame the game draws is scaled to the window with **linear filtering**
-(`SDL_SetTextureScaleMode`), so upscaling is smooth rather than blocky. Point
-sampling would be sharper for pixel art but shows hard square edges at large
-window sizes; this can be revisited if a sharper look is preferred.
+The frame is presented at the largest **whole-number** scale that fits the
+window, centred, with **nearest** sampling, so each guest pixel stays a sharp
+square and the aspect ratio stays correct (398x239 is 1.67:1; stretching to a
+4:3 window would distort it). Any leftover border is left as background.
+
+Linear filtering was tried and rejected: it turned every pixel into a blur,
+which is the opposite of what this content wants.
 
 Settings persist to `settings.ini` on exit and are read at startup. The file
 uses the same `[General]` section and key names the Windows launcher writes, so

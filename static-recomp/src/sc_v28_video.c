@@ -207,53 +207,70 @@ static unsigned bg_bpp(unsigned mode, unsigned layer) {
  * had no entry at all and fell through to 0 for every layer, which made
  * objects win against every background in the live city view (mode 9).
  */
+/*
+ * Background layer priority.
+ *
+ * Modes 0-6 keep the tables this project has always used. They do not match
+ * the generic SNES ordering (BG1=0, BG2=4, BG3=8, BG4=12), and the game is
+ * built around them: replacing them with the generic ordering was tried and
+ * visibly broke the pre-city screens, where the paper and the keys in the
+ * type-on-a-page sequence rendered incorrectly. That change was reverted.
+ *
+ * Modes 7, 8 and 9 previously had no entry and fell through to 0 for every
+ * layer, while obj_priority() still returned 2..8, so an object beat every
+ * background at every priority in the live city view (mode 9) and drew over
+ * the buildings. They now get explicit tables interleaved with the object
+ * levels, which is what fixes that.
+ */
 static uint8_t bg_priority(unsigned mode, unsigned layer, unsigned high,
                            int mode1_bg3_high) {
-    static const uint8_t four_layer[4][2] = {
+    static const uint8_t mode0[4][2] = {
+        {8u, 11u}, {7u, 10u}, {2u, 5u}, {1u, 4u}
+    };
+    static const uint8_t mode1[4][2] = {
+        {6u, 9u}, {5u, 8u}, {1u, 3u}, {0u, 0u}
+    };
+    static const uint8_t mode2to5[4][2] = {
+        {3u, 9u}, {1u, 7u}, {0u, 0u}, {0u, 0u}
+    };
+    static const uint8_t mode6[4][2] = {
+        {3u, 9u}, {0u, 0u}, {0u, 0u}, {0u, 0u}
+    };
+    /* Modes 7-9: interleaved with obj_priority so each object level clears
+       exactly one more layer than the one below it. */
+    static const uint8_t mode7_9[4][2] = {
         {0u, 1u}, {4u, 5u}, {8u, 9u}, {12u, 13u}
-    };
-    static const uint8_t three_layer[4][2] = {
-        {0u, 1u}, {4u, 5u}, {8u, 9u}, {0u, 0u}
-    };
-    static const uint8_t two_layer[4][2] = {
-        {0u, 1u}, {4u, 5u}, {0u, 0u}, {0u, 0u}
-    };
-    static const uint8_t no_layer[4][2] = {
-        {0u, 0u}, {0u, 0u}, {0u, 0u}, {0u, 0u}
     };
     unsigned h = high != 0u;
 
     if (layer >= 4u) return 0u;
     switch (mode) {
         case 0u:
-            return four_layer[layer][h];
+            return mode0[layer][h];
         case 1u:
-            /* BG3 with the high bit set is lifted above BG4's base. */
             if (layer == 2u && h && mode1_bg3_high) return 11u;
-            return four_layer[layer][h];
-        case 2u:
-        case 3u:
-        case 4u:
-            return three_layer[layer][h];
-        case 8u:
-            return three_layer[layer][h];
-        case 9u:
-            return three_layer[layer][h];
-        case 5u:
+            return mode1[layer][h];
+        case 2u: case 3u: case 4u: case 5u:
+            return mode2to5[layer][h];
         case 6u:
-            return two_layer[layer][h];
+            return mode6[layer][h];
         default:
-            /* Mode 7 has no background layers at all. */
-            return no_layer[layer][0];
+            return mode7_9[layer][h];
     }
 }
 
 static uint8_t obj_priority(unsigned mode, unsigned priority) {
-    /* The object levels are mode-independent: 0 never draws in front, and each
-       step clears exactly one more background layer. */
-    static const uint8_t levels[4] = {0u, 2u, 6u, 10u};
-    (void)mode;
-    return levels[priority & 3u];
+    /* Modes 0-6 keep the levels this project has always used. */
+    static const uint8_t mode0[4] = {3u, 6u, 9u, 12u};
+    static const uint8_t mode1[4] = {2u, 4u, 7u, 10u};
+    static const uint8_t other[4] = {2u, 4u, 6u, 8u};
+    /* Modes 7-9 use the generic interleaving (see bg_priority). */
+    static const uint8_t mode7_9[4] = {0u, 2u, 6u, 10u};
+    priority &= 3u;
+    if (mode == 0u) return mode0[priority];
+    if (mode == 1u) return mode1[priority];
+    if (mode >= 2u && mode <= 6u) return other[priority];
+    return mode7_9[priority];
 }
 
 static uint16_t direct_color(uint8_t palette, uint8_t pixel) {
@@ -583,7 +600,14 @@ static void object_line(const PpuLineView *view, unsigned y,
         PpuObject object = decode_object(view, index);
         uint8_t line;
         int object_x = object.x >= 256u ? (int)object.x - 512 : (int)object.x;
-        int display_x = object_x;
+        /* In the widened view the map is re-derived from the WRAM camera, so
+           world x = 0 lands at screen x = left_margin while the OAM sprites
+           are still positioned in the original 256-pixel screen space. Every
+           sprite therefore needs the same displacement the map got, which is
+           native_camera_x - display_left_x (71 px = 8.875 cells while the
+           camera is unclamped). Only the map cursor used to get it, which
+           left the train sitting about nine cells left of its own track. */
+        int display_x = object_x + cursor_shift_x;
         int display_y = (int)object.y;
         int cursor_object = read_wram16(0x0201u) == 0x00ffu && index < 4u;
         int cursor_x = (int)(int16_t)read_wram16(0x025du);
@@ -599,7 +623,7 @@ static void object_line(const PpuLineView *view, unsigned y,
             display_x = (int)object.x + cursor_shift_x;
         }
         else if (cursor_object && (cursor_shift_x || cursor_shift_y)) {
-            display_x += cursor_shift_x + cursor_extension;
+            display_x += cursor_extension;
         }
         if (cursor_object) display_y += cursor_shift_y;
         line = (uint8_t)((int)y + 1 - display_y);

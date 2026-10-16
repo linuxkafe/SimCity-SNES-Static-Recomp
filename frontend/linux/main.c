@@ -200,7 +200,7 @@ static void apply_config_to_frontend(void)
                         g_renderer, SDL_PIXELFORMAT_ARGB8888,
                         SDL_TEXTUREACCESS_STREAMING, tw, th);
                     if (fresh) {
-                        SDL_SetTextureScaleMode(fresh, SDL_ScaleModeLinear);
+                        SDL_SetTextureScaleMode(fresh, SDL_ScaleModeNearest);
                         SDL_DestroyTexture(g_texture);
                         g_texture = fresh;
                     }
@@ -428,7 +428,7 @@ static int init_sdl(void)
         fprintf(stderr, "SDL_CreateTexture failed: %s\n", SDL_GetError());
         return -1;
     }
-    SDL_SetTextureScaleMode(g_texture, SDL_ScaleModeLinear);
+    SDL_SetTextureScaleMode(g_texture, SDL_ScaleModeNearest);
 
     SDL_AudioSpec spec;
     SDL_zero(spec);
@@ -576,11 +576,31 @@ uploaded:
 
     SDL_RenderClear(g_renderer);
 
-    /* Render texture scaled to window size */
+    /*
+     * Present at the largest whole-number scale that fits, centred, with
+     * nearest sampling. Stretching the frame to fill the window both distorts
+     * the aspect ratio (398x239 is 1.67:1, a 4:3 window is 1.33:1) and, with
+     * linear filtering, turns every pixel into a blur. An integer scale keeps
+     * each guest pixel as a sharp square and leaves the aspect correct; the
+     * leftover border is filled by the SDL_RenderClear above.
+     */
     int w, h;
+    int tex_height = SIMCITY_RECOMP_FRAME_HEIGHT;
     SDL_GetWindowSize(g_window, &w, &h);
 
-    SDL_Rect dst = {0, 0, w, h};
+    SDL_Rect dst;
+    if (tex_width > 0 && tex_height > 0 && w > 0 && h > 0) {
+        int scale = w / (int)tex_width;
+        int by_height = h / (int)tex_height;
+        if (by_height < scale) scale = by_height;
+        if (scale < 1) scale = 1;
+        dst.w = (int)tex_width * scale;
+        dst.h = (int)tex_height * scale;
+        dst.x = (w - dst.w) / 2;
+        dst.y = (h - dst.h) / 2;
+    } else {
+        dst.x = 0; dst.y = 0; dst.w = w; dst.h = h;
+    }
     SDL_RenderCopy(g_renderer, g_texture, NULL, &dst);
 
     /* Deliberately does NOT present. The menu path draws the overlay on top of
