@@ -56,6 +56,10 @@ static int g_report_audio = 0;
 static int g_sticks_menu_held = 0;
 static uint32_t *g_swap_buffer = NULL;
 static uint32_t g_swap_capacity = 0u;
+
+/* Highest funds value observed, for the "money never decreases" cheat. */
+static unsigned g_money_never_decrease_high = 0u;
+static int      g_money_never_decrease_seen = 0;
 static int g_target_width = 512;
 static int g_target_height = 480;
 
@@ -127,26 +131,37 @@ static void apply_start_money_cheat(unsigned value)
         fprintf(stderr, "start money cheat rejected by simcity_recomp_write_wram\n");
 }
 
-/* Toggle cheats that modify persistent config and take effect immediately */
-static void apply_toggle_cheats(void)
+/*
+ * Money never decreases.
+ *
+ * The game subtracts building costs from the three-byte funds counter at
+ * $0B9D. Rather than intercept those writes inside the core, the frontend
+ * remembers the highest value seen and writes it back whenever the counter
+ * drops. This is what "freeze money" already did; this variant only intervenes
+ * when a decrease is actually observed, so income still accumulates normally.
+ */
+static void apply_money_never_decrease(void)
 {
-    /* Money never decreases - would need WRAM hook to intercept writes to $0B9D
-       For now, we just track the config state. Full implementation needs
-       a write watchpoint or frame-by-frame restore. */
-    (void)g_config.money_never_decrease;
+    uint8_t buf[3];
+    unsigned value;
 
-    /* Earn $1 per build - would need to hook building placement code */
-    (void)g_config.earn_per_build;
+    if (!simcity_recomp_read_wram(g_recomp, SIMCITY_CHEAT_FUNDS_ADDR, buf, 3u))
+        return;
+    value = (unsigned)buf[0] | ((unsigned)buf[1] << 8) |
+            ((unsigned)buf[2] << 16);
 
-    /* Time faster/slower - would need to hook the game timer */
-    (void)g_config.time_faster;
-    (void)g_config.time_slower;
+    if (!g_money_never_decrease_seen || value > g_money_never_decrease_high) {
+        g_money_never_decrease_seen = 1;
+        g_money_never_decrease_high = value;
+        return;
+    }
+    if (value == g_money_never_decrease_high)
+        return;
 
-    /* All buildings powered - would need to hook power grid update */
-    (void)g_config.all_power;
-
-    /* Demolish anything - would need to hook demolition validation */
-    (void)g_config.demolish_anything;
+    buf[0] = (uint8_t)(g_money_never_decrease_high & 0xFFu);
+    buf[1] = (uint8_t)((g_money_never_decrease_high >> 8) & 0xFFu);
+    buf[2] = (uint8_t)((g_money_never_decrease_high >> 16) & 0xFFu);
+    (void)simcity_recomp_write_wram(g_recomp, SIMCITY_CHEAT_FUNDS_ADDR, buf, 3u);
 }
 
 /* Kept in step with the menu so the overlay and the cheat cannot disagree. */
@@ -812,7 +827,11 @@ int main(int argc, char **argv)
                 action == SIMCITY_MENU_ACTION_TOGGLE_TIME_SLOWER ||
                 action == SIMCITY_MENU_ACTION_TOGGLE_ALL_POWER ||
                 action == SIMCITY_MENU_ACTION_TOGGLE_DEMOLISH_ANYTHING) {
-                apply_toggle_cheats();
+                /* The cheat state lives in g_config and is applied every
+                   frame, so a toggle only needs the tracker reset and a
+                   save; no separate application step is required. */
+                g_money_never_decrease_seen = 0;
+                g_money_never_decrease_high = 0u;
                 simcity_settings_ini_save(g_settings_path, &g_config);
             }
             if (action == SIMCITY_MENU_ACTION_QUIT)
@@ -908,6 +927,8 @@ int main(int argc, char **argv)
         SDL_RenderPresent(g_renderer);
         if (g_config.freeze_money)
             apply_money_cheat();
+        if (g_config.money_never_decrease)
+            apply_money_never_decrease();
 
         pump_audio();
 
