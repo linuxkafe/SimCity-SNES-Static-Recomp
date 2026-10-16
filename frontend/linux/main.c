@@ -185,6 +185,7 @@ static void apply_config_to_frontend(void)
                         g_renderer, SDL_PIXELFORMAT_ARGB8888,
                         SDL_TEXTUREACCESS_STREAMING, tw, th);
                     if (fresh) {
+                        SDL_SetTextureScaleMode(fresh, SDL_ScaleModeLinear);
                         SDL_DestroyTexture(g_texture);
                         g_texture = fresh;
                     }
@@ -412,6 +413,7 @@ static int init_sdl(void)
         fprintf(stderr, "SDL_CreateTexture failed: %s\n", SDL_GetError());
         return -1;
     }
+    SDL_SetTextureScaleMode(g_texture, SDL_ScaleModeLinear);
 
     SDL_AudioSpec spec;
     SDL_zero(spec);
