@@ -44,6 +44,7 @@ static int g_window_start = -1;
 static int g_window_end = -1;
 static uint32_t g_dump_pc_rows = 30;
 static int g_no_pc_profile = 0;
+static int g_widescreen = 0;
 static int g_print_hash = 0;
 static int g_per_frame = 0;
 static int g_no_render = 0;
@@ -312,6 +313,7 @@ static void print_usage(const char *argv0)
     fprintf(stderr, "  --window A:B      reset profiler at frame A, dump at B\n");
     fprintf(stderr, "  --dump-pc N       PC histogram rows (default 30)\n");
     fprintf(stderr, "  --no-pc-profile   disable per-instruction PC histogram (timing only)\n");
+    fprintf(stderr, "  --widescreen      render the 398x239 city view (exercises city_background_pixel)\n");
     fprintf(stderr, "  --hash            print a line whenever the screen changes\n");
     fprintf(stderr, "  --per-frame       print 'pf <frame> <us> <instr>' per frame\n");
     fprintf(stderr, "  --watch OFFSET    print a WRAM 16-bit value whenever it changes\n");
@@ -343,6 +345,8 @@ int main(int argc, char **argv)
             g_dump_pc_rows = (uint32_t)atoi(argv[++i]);
         } else if (!strcmp(arg, "--no-pc-profile")) {
             g_no_pc_profile = 1;
+        } else if (!strcmp(arg, "--widescreen")) {
+            g_widescreen = 1;
         } else if (!strcmp(arg, "--hash")) {
             g_print_hash = 1;
         } else if (!strcmp(arg, "--no-render")) {
@@ -461,6 +465,12 @@ int main(int argc, char **argv)
     }
     free(rom);
 
+    if (g_widescreen &&
+        simcity_recomp_set_widescreen(recomp, 1, error, sizeof(error)) != 1) {
+        fprintf(stderr, "widescreen: %s\n", error);
+        simcity_recomp_destroy(recomp);
+        return 1;
+    }
     if (simcity_recomp_reset(recomp, error, sizeof(error)) != 1) {
         fprintf(stderr, "simcity_recomp_reset failed: %s\n", error);
         simcity_recomp_destroy(recomp);
