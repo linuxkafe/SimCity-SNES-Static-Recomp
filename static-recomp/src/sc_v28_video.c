@@ -363,6 +363,7 @@ static int background_pixel(const PpuLineView *view, unsigned layer,
     uint8_t sc;
     uint8_t nba;
     unsigned tile_size;
+    unsigned tile_shift;
     unsigned map_width;
     unsigned map_height;
     unsigned world_width;
@@ -399,15 +400,17 @@ static int background_pixel(const PpuLineView *view, unsigned layer,
     char_base = (uint32_t)((layer & 1u) ? (nba >> 4) : (nba & 15u)) << 13;
     tile_size = (bgmode & (uint8_t)(0x10u << layer)) ? 16u : 8u;
     if (mode == 5u || mode == 6u) tile_size = 16u;
+    /* log2(tile_size): 8 -> 3, 16 -> 4. */
+    tile_shift = tile_size == 16u ? 4u : 3u;
     world_width = map_width * tile_size;
     world_height = map_height * tile_size;
     world_x = wrap_coordinate(sample_x + (int)view->scroll[layer * 2u],
                               world_width);
-    world_y = (sample_y + view->scroll[layer * 2u + 1u]) % world_height;
-    tile_x = world_x / tile_size;
-    tile_y = world_y / tile_size;
-    px = world_x % tile_size;
-    py = world_y % tile_size;
+    world_y = (sample_y + view->scroll[layer * 2u + 1u]) & (world_height - 1u);
+    tile_x = world_x >> tile_shift;
+    tile_y = world_y >> tile_shift;
+    px = world_x & (tile_size - 1u);
+    py = world_y & (tile_size - 1u);
 
     screen_index = (tile_y >> 5) * (map_width == 64u ? 2u : 1u) +
                    (tile_x >> 5);
