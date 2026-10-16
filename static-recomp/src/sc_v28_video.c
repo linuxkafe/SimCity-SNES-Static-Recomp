@@ -190,39 +190,70 @@ static unsigned bg_bpp(unsigned mode, unsigned layer) {
     return mode < 7u && layer < 4u ? bpp[mode][layer] : 0u;
 }
 
+/* SNES background layer priority, per the hardware tables.
+ *
+ * Each background layer owns a base priority and the tilemap entry's high bit
+ * (bit 13) raises it by one, so the values interleave with the object levels:
+ *
+ *   BG1 = 0/1   BG2 = 4/5   BG3 = 8/9   BG4 = 12/13
+ *   OBJ = 0     2      6        10
+ *
+ * An object only replaces a layer when its priority is strictly greater
+ * (see screen_pixel), so an object at 0 ties with BG1 and loses to it, which
+ * is what "priority 0 never draws in front" means.
+ *
+ * Modes 2-4 have three layers, modes 5 and 6 have two, and modes 8 and 9 are
+ * the three-layer interlace variants of modes 0 and 1. Modes 7-9 previously
+ * had no entry at all and fell through to 0 for every layer, which made
+ * objects win against every background in the live city view (mode 9).
+ */
 static uint8_t bg_priority(unsigned mode, unsigned layer, unsigned high,
                            int mode1_bg3_high) {
-    static const uint8_t mode0[4][2] = {
-        {8u, 11u}, {7u, 10u}, {2u, 5u}, {1u, 4u}
+    static const uint8_t four_layer[4][2] = {
+        {0u, 1u}, {4u, 5u}, {8u, 9u}, {12u, 13u}
     };
-    static const uint8_t mode1[4][2] = {
-        {6u, 9u}, {5u, 8u}, {1u, 3u}, {0u, 0u}
+    static const uint8_t three_layer[4][2] = {
+        {0u, 1u}, {4u, 5u}, {8u, 9u}, {0u, 0u}
     };
-    static const uint8_t mode2to5[4][2] = {
-        {3u, 9u}, {1u, 7u}, {0u, 0u}, {0u, 0u}
+    static const uint8_t two_layer[4][2] = {
+        {0u, 1u}, {4u, 5u}, {0u, 0u}, {0u, 0u}
     };
-    static const uint8_t mode6[4][2] = {
-        {3u, 9u}, {0u, 0u}, {0u, 0u}, {0u, 0u}
+    static const uint8_t no_layer[4][2] = {
+        {0u, 0u}, {0u, 0u}, {0u, 0u}, {0u, 0u}
     };
+    unsigned h = high != 0u;
+
     if (layer >= 4u) return 0u;
-    if (mode == 0u) return mode0[layer][high != 0u];
-    if (mode == 1u) {
-        if (layer == 2u && high && mode1_bg3_high) return 11u;
-        return mode1[layer][high != 0u];
+    switch (mode) {
+        case 0u:
+            return four_layer[layer][h];
+        case 1u:
+            /* BG3 with the high bit set is lifted above BG4's base. */
+            if (layer == 2u && h && mode1_bg3_high) return 11u;
+            return four_layer[layer][h];
+        case 2u:
+        case 3u:
+        case 4u:
+            return three_layer[layer][h];
+        case 8u:
+            return three_layer[layer][h];
+        case 9u:
+            return three_layer[layer][h];
+        case 5u:
+        case 6u:
+            return two_layer[layer][h];
+        default:
+            /* Mode 7 has no background layers at all. */
+            return no_layer[layer][0];
     }
-    if (mode >= 2u && mode <= 5u) return mode2to5[layer][high != 0u];
-    if (mode == 6u) return mode6[layer][high != 0u];
-    return 0u;
 }
 
 static uint8_t obj_priority(unsigned mode, unsigned priority) {
-    static const uint8_t mode0[4] = {3u, 6u, 9u, 12u};
-    static const uint8_t mode1[4] = {2u, 4u, 7u, 10u};
-    static const uint8_t other[4] = {2u, 4u, 6u, 8u};
-    priority &= 3u;
-    if (mode == 0u) return mode0[priority];
-    if (mode == 1u) return mode1[priority];
-    return other[priority];
+    /* The object levels are mode-independent: 0 never draws in front, and each
+       step clears exactly one more background layer. */
+    static const uint8_t levels[4] = {0u, 2u, 6u, 10u};
+    (void)mode;
+    return levels[priority & 3u];
 }
 
 static uint16_t direct_color(uint8_t palette, uint8_t pixel) {
