@@ -110,6 +110,7 @@ Both the settings menu and the **CHEATS** submenu are full-screen overlays.
 |-----|--------|
 | Resolution | 480p / 720p / 800p / 1080p, applied to the live window |
 | Widescreen | Toggles the 398x239 core output |
+| HUD shift X | −142..+142 px, moves the in-game HUD and toolbar. Defaults to `-71`, which cancels the widened map margin and restores the HUD to its native column; `0` is the old, displaced position |
 | Soft mouse | Toggles pointer-driven cursor (on by default) |
 | Mouse sens | 1-16, lower is more sensitive |
 | Color | `SWAP R/B` (default) or `NORMAL` |
@@ -131,6 +132,35 @@ which is the opposite of what this content wants.
 Settings persist to `settings.ini` on exit and are read at startup. The file
 uses the same `[General]` section and key names the Windows launcher writes, so
 one file works on both frontends. Command-line options override the file.
+
+#### HUD shift X (why it exists)
+
+The in-game HUD — status bar, construction toolbar, message box — is drawn from
+OAM sprites that the guest places in native 256-pixel screen space. In the
+widened view the city map gains 71 px on each side, and every sprite is moved by
+that margin so world objects stay registered with the map. That same 71 px also
+moves the HUD, which is why the toolbar sits away from the edge when widescreen
+is on and is correctly placed when it is off.
+
+No field in an OAM entry separates HUD chrome from world objects: index, y band,
+priority and palette all overlap. There is nothing for the renderer to key on,
+so where the HUD sits is a presentation choice and it is exposed as one rather
+than guessed at.
+
+The value is in pixels, applies only while widescreen is on, and leaves the city
+map itself untouched: at `-71` the map region is pixel-identical, and the map
+cursor keeps its own displacement.
+
+**Known issue (T054):** because the offset is applied to chrome only, the
+toolbar and the map cursor no longer share a displacement. With the shipped
+`-71` default the toolbar sits at its native column while the cursor stays at
+native + 71, so the cursor does not appear on the tools even though the guest
+still performs the selection at the leftmost corner. Writing `HudShiftX=0`
+restores alignment at the cost of the displaced toolbar.
+
+It ships defaulted to `-71`, which cancels the margin exactly and is what a
+player sees on a fresh install. `headless-profile --hud-shift 0` does the same
+for A/B against the pre-T050 renderer.
 
 ### Settings overlay (F1)
 

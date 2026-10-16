@@ -45,6 +45,9 @@ static int g_window_end = -1;
 static uint32_t g_dump_pc_rows = 30;
 static int g_no_pc_profile = 0;
 static int g_widescreen = 0;
+/* Mirrors the shipped frontend default so headless runs show what a player
+   sees. Pass --hud-shift 0 to reproduce the pre-T050 displaced position. */
+static int g_hud_shift_x = SIMCITY_RECOMP_HUD_SHIFT_DEFAULT;
 static int g_print_hash = 0;
 static int g_per_frame = 0;
 static int g_no_render = 0;
@@ -62,6 +65,8 @@ static int g_zoom_count = 0;
 static int g_wram_frame[8];
 static char g_wram_path[8][256];
 static int g_wram_count = 0;
+static int g_oam_first = -1;
+static int g_oam_last = -1;
 static uint32_t g_last_hash;
 static int g_have_hash = 0;
 
@@ -304,6 +309,56 @@ static void print_zoom(SimCityRecomp *recomp, int frame, const int *r)
     }
 }
 
+/* Per-entry OAM dump for T050.  Prints only entries that are not fully blank,
+   in the same field layout the renderer decodes, so a sprite can be identified
+   by identity rather than guessed from its screen position. */
+static void dump_oam(SimCityRecomp *recomp, int frame)
+{
+    static const uint8_t small_w[8] = {8, 8, 8, 16, 16, 32, 16, 16};
+    static const uint8_t small_h[8] = {8, 8, 8, 16, 16, 32, 32, 32};
+    static const uint8_t large_w[8] = {16, 32, 64, 32, 64, 64, 32, 32};
+    static const uint8_t large_h[8] = {16, 32, 64, 32, 64, 64, 32, 32};
+    uint8_t oam[544];
+    uint8_t camera[4];
+    unsigned mode, size_mode, active = 0;
+
+    if (!simcity_recomp_read_oam(recomp, oam, sizeof(oam))) {
+        fprintf(stderr, "OAM read failed at frame %d\n", frame);
+        return;
+    }
+    /* Mode and OBJ size come from the PPU; without them the size column in the
+       dump would be a guess. */
+    mode = 0;
+    size_mode = 0;
+    for (unsigned i = 0; i < 128u; i++) {
+        unsigned pair = (oam[512u + i / 4u] >> ((i & 3u) * 2u)) & 3u;
+        uint8_t attr = oam[i * 4u + 3u];
+        unsigned x = (unsigned)oam[i * 4u] | ((pair & 1u) << 8);
+        unsigned w, h;
+        if (!oam[i * 4u] && !oam[i * 4u + 1u] && !oam[i * 4u + 2u] && !attr &&
+            !(pair >> 1))
+            continue;
+        w = (pair >> 1) ? large_w[size_mode] : small_w[mode];
+        h = (pair >> 1) ? large_h[size_mode] : small_h[mode];
+        /* Same 9-bit fold the renderer uses, so a dump row can be compared
+           directly against the screen position the sprite ends up at. */
+        printf("oam %d %3u x=%4d y=%3u t=%3u ns=%u %ux%u pal=%u pri=%u hf=%u vf=%u\n",
+               frame, i, x >= 256u ? (int)x - 512 : (int)x,
+               (unsigned)(oam[i * 4u + 1u] + 1u),
+               oam[i * 4u + 2u], attr & 1u, w, h, (attr >> 1) & 7u,
+               (attr >> 4) & 3u, (attr >> 6) & 1u, (attr >> 7) & 1u);
+        active++;
+    }
+    /* The camera is printed alongside every dump so a sprite whose X tracks the
+       camera can be told apart from chrome that stays put. */
+    simcity_recomp_read_wram(recomp, 0x01BDu, camera, sizeof(camera));
+    printf("oam %d end active=%u cam_x=%d cam_y_fine=%d high=", frame, active,
+           (int)(int16_t)((unsigned)camera[0] | ((unsigned)camera[1] << 8)),
+           (int)((unsigned)camera[2] | ((unsigned)camera[3] << 8)));
+    for (unsigned b = 0; b < 32u; b++) printf("%02X", oam[512u + b]);
+    printf("\n");
+}
+
 static void print_usage(const char *argv0)
 {
     fprintf(stderr, "Usage: %s <rom-path> [frames] [options]\n", argv0);
@@ -314,10 +369,12 @@ static void print_usage(const char *argv0)
     fprintf(stderr, "  --dump-pc N       PC histogram rows (default 30)\n");
     fprintf(stderr, "  --no-pc-profile   disable per-instruction PC histogram (timing only)\n");
     fprintf(stderr, "  --widescreen      render the 398x239 city view (exercises city_background_pixel)\n");
+    fprintf(stderr, "  --hud-shift N     HUD chrome X offset in pixels (-142..142, default 0)\n");
     fprintf(stderr, "  --hash            print a line whenever the screen changes\n");
     fprintf(stderr, "  --per-frame       print 'pf <frame> <us> <instr>' per frame\n");
     fprintf(stderr, "  --watch OFFSET    print a WRAM 16-bit value whenever it changes\n");
     fprintf(stderr, "  --wram-dump N:F   dump the 128 KiB WRAM image at frame N to file F\n");
+    fprintf(stderr, "  --oam-dump A:B    dump the decoded OAM for every frame in [A,B]\n");
     fprintf(stderr, "  --no-render       skip software rendering (emulation-only timing)\n");
     fprintf(stderr, "  --ascii N         print a coarse ASCII rendition of frame N\n");
     fprintf(stderr, "  --zoom N:x0:y0:x1:y1  print a 1-char-per-pixel region of frame N\n");
@@ -347,6 +404,8 @@ int main(int argc, char **argv)
             g_no_pc_profile = 1;
         } else if (!strcmp(arg, "--widescreen")) {
             g_widescreen = 1;
+        } else if (!strcmp(arg, "--hud-shift") && i + 1 < argc) {
+            g_hud_shift_x = (int)strtol(argv[++i], NULL, 10);
         } else if (!strcmp(arg, "--hash")) {
             g_print_hash = 1;
         } else if (!strcmp(arg, "--no-render")) {
@@ -385,6 +444,12 @@ int main(int argc, char **argv)
             snprintf(g_wram_path[g_wram_count], sizeof(g_wram_path[0]),
                      "%s", path);
             g_wram_count++;
+        } else if (!strcmp(arg, "--oam-dump") && i + 1 < argc) {
+            if (sscanf(argv[++i], "%d:%d", &g_oam_first, &g_oam_last) != 2 ||
+                g_oam_first < 0 || g_oam_last < g_oam_first) {
+                fprintf(stderr, "Bad --oam-dump spec: %s\n", argv[i]);
+                return 1;
+            }
         } else if (!strcmp(arg, "--watch") && i + 1 < argc) {
             if (g_watch_count >= 4) {
                 fprintf(stderr, "Too many --watch options\n");
@@ -471,6 +536,12 @@ int main(int argc, char **argv)
         simcity_recomp_destroy(recomp);
         return 1;
     }
+    if (simcity_recomp_set_hud_shift_x(recomp, g_hud_shift_x, error,
+                                       sizeof(error)) != 1) {
+        fprintf(stderr, "hud shift: %s\n", error);
+        simcity_recomp_destroy(recomp);
+        return 1;
+    }
     if (simcity_recomp_reset(recomp, error, sizeof(error)) != 1) {
         fprintf(stderr, "simcity_recomp_reset failed: %s\n", error);
         simcity_recomp_destroy(recomp);
@@ -547,6 +618,9 @@ sc_sim_profiler_init();
                 g_watch_have[w] = 1;
             }
         }
+
+        if (g_oam_first >= 0 && i >= g_oam_first && i <= g_oam_last)
+            dump_oam(recomp, i);
 
         if (g_per_frame)
             printf("pf %d %.0f %" PRIu64 "\n", i, frame_seconds * 1e6,

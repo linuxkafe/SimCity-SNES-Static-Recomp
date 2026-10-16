@@ -619,7 +619,7 @@ static PpuObject decode_object(const PpuLineView *view, unsigned index) {
 static void object_line(const PpuLineView *view, unsigned y,
                         unsigned output_width, unsigned left_margin,
                         int cursor_shift_x, int cursor_shift_y,
-                        int sprite_shift_x,
+                        int sprite_shift_x, int hud_shift_x,
                         uint8_t palettes[SC_V28_MAX_FRAME_WIDTH],
                         uint8_t priorities[SC_V28_MAX_FRAME_WIDTH]) {
     PpuObjectLine items[32];
@@ -664,6 +664,15 @@ static void object_line(const PpuLineView *view, unsigned y,
         }
         else {
             display_x = object_x + sprite_shift_x;
+            /* HUD chrome (status bar, construction toolbar, message box) is
+               placed by the game in native screen space, so the blanket map
+               margin displaces it by left_margin. No OAM field separates chrome
+               from world objects -- index, y band, priority and palette all
+               overlap -- so the remaining correction is the player's. Entries
+               below SC_HUD_CHROME_FIRST_OAM are the map cursor and its
+               footprint and must keep following the map. */
+            if (hud_shift_x && index >= SC_HUD_CHROME_FIRST_OAM)
+                display_x += hud_shift_x;
         }
         if (cursor_object) display_y += cursor_shift_y;
         line = (uint8_t)((int)y + 1 - display_y);
@@ -930,6 +939,7 @@ static void analyze(const uint32_t *pixels, size_t count,
 static int render_lines_impl(const SCV11Runtime *runtime,
                              unsigned output_width,
                              unsigned left_margin,
+                             int hud_shift_x,
                              unsigned x_begin,
                              unsigned x_end,
                              uint16_t *out555,
@@ -1061,6 +1071,7 @@ static int render_lines_impl(const SCV11Runtime *runtime,
         }
         object_line(&view, y, output_width, object_left_margin,
                     cursor_shift_x, cursor_shift_y, sprite_shift_x,
+                    expand_city_view ? hud_shift_x : 0,
                     object_palette, object_priority_value);
         for (x = x_begin; x < x_end; ++x) {
             int source_x = (int)x - (int)left_margin;
@@ -1147,13 +1158,14 @@ static int render_lines_impl(const SCV11Runtime *runtime,
 int sc_v28_render_first_visible_frame(const SCV11Runtime *runtime,
                                       unsigned output_width,
                                       unsigned left_margin,
+                                      int hud_shift_x,
                                       uint16_t *out555,
                                       size_t cap555,
                                       uint32_t *out32,
                                       size_t cap32,
                                       SCV28VideoReport *report) {
     return render_lines_impl(runtime, output_width, left_margin,
-                             0u, output_width,
+                             hud_shift_x, 0u, output_width,
                              out555, cap555, out32, cap32,
                              report, 1);
 }
@@ -1161,6 +1173,7 @@ int sc_v28_render_first_visible_frame(const SCV11Runtime *runtime,
 int sc_v28_render_first_visible_frame_columns(const SCV11Runtime *runtime,
                                               unsigned output_width,
                                               unsigned left_margin,
+                                              int hud_shift_x,
                                               unsigned x_begin,
                                               unsigned x_end,
                                               uint16_t *bgr555,
@@ -1169,7 +1182,7 @@ int sc_v28_render_first_visible_frame_columns(const SCV11Runtime *runtime,
                                               size_t bgra_capacity,
                                               SCV28VideoReport *report) {
     return render_lines_impl(runtime, output_width, left_margin,
-                             x_begin, x_end,
+                             hud_shift_x, x_begin, x_end,
                              bgr555, bgr555_capacity, bgra, bgra_capacity,
                              report, 0);
 }

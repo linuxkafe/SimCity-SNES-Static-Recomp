@@ -21,6 +21,7 @@ struct SimCityRecomp {
      uint16_t bgr555[SIMCITY_RECOMP_MAX_FRAME_PIXELS];
      uint32_t bgra[SIMCITY_RECOMP_MAX_FRAME_PIXELS];
      uint8_t widescreen;
+    int16_t hud_shift_x;
      int16_t widescreen_cursor_extension_x;
      int16_t widescreen_cursor_base_x;
      int16_t widescreen_cursor_anchor_view_x;
@@ -574,6 +575,7 @@ static int render_current_frame(SimCityRecomp *instance, char *error,
     memset(&instance->video, 0, sizeof(instance->video));
     if (!sc_v28_render_first_visible_frame(rt,
                                            width, margin,
+                                           instance->hud_shift_x,
                                            instance->bgr555,
                                            SIMCITY_RECOMP_MAX_FRAME_PIXELS,
                                            instance->bgra,
@@ -693,14 +695,17 @@ int simcity_recomp_create(SimCityRecomp **out_instance,
                   "Unable to allocate the static recompilation instance.");
         return 0;
     }
-    instance->rom = (uint8_t *)malloc(SIMCITY_RECOMP_ROM_SIZE);
+instance->rom = (uint8_t *)malloc(SIMCITY_RECOMP_ROM_SIZE);
     instance->runtime = (SCV11Runtime *)calloc(1u, sizeof(*instance->runtime));
     if (!instance->rom || !instance->runtime) {
         simcity_recomp_destroy(instance);
-        copy_text(error, error_capacity,
-                  "Unable to allocate the static recompilation runtime.");
+        copy_text(error,error_capacity,static_error);
         return 0;
     }
+    /* calloc leaves this 0, which is the pre-T050 displaced position. A caller
+       that never configures anything should still get the corrected HUD, so the
+       created instance starts at the shipped default rather than at zero. */
+    instance->hud_shift_x = SIMCITY_RECOMP_HUD_SHIFT_DEFAULT;
     memcpy(instance->rom, rom, SIMCITY_RECOMP_ROM_SIZE);
     if (!sc_static_apu_acquire(static_error, sizeof(static_error))) {
         simcity_recomp_destroy(instance);
@@ -846,6 +851,7 @@ static int advance_internal(SimCityRecomp *instance,
                 SIMCITY_RECOMP_WIDESCREEN_MARGIN : 0u;
         if (sc_v28_render_first_visible_frame(instance->runtime,
                                               width, margin,
+                                              instance->hud_shift_x,
                                               instance->bgr555,
                                               SIMCITY_RECOMP_MAX_FRAME_PIXELS,
                                               instance->bgra,
@@ -1117,6 +1123,38 @@ int simcity_recomp_set_widescreen(SimCityRecomp *instance, int enabled,
     return render_current_frame(instance, error, error_capacity);
 }
 
+int simcity_recomp_hud_shift_x(const SimCityRecomp *instance) {
+    return instance ? instance->hud_shift_x : 0;
+}
+
+int simcity_recomp_set_hud_shift_x(SimCityRecomp *instance, int pixels,
+                                   char *error, size_t error_capacity) {
+    if (!instance || !instance->runtime) {
+        copy_text(error, error_capacity,
+                  "A loaded static core is required to move the HUD.");
+        return 0;
+    }
+    if (pixels < SIMCITY_RECOMP_HUD_SHIFT_MIN ||
+        pixels > SIMCITY_RECOMP_HUD_SHIFT_MAX) {
+        (void)snprintf(error, error_capacity,
+                       "HUD offset %d is outside %d..%d pixels.",
+                       pixels, SIMCITY_RECOMP_HUD_SHIFT_MIN,
+                       SIMCITY_RECOMP_HUD_SHIFT_MAX);
+        return 0;
+    }
+    if (instance->hud_shift_x == pixels) {
+        copy_text(error, error_capacity, "");
+        return 1;
+    }
+    instance->hud_shift_x = pixels;
+    /* The cached framebuffer was produced with the previous offset, and its
+       hash no longer describes the PPU state, so the identity fast path in
+       render_current_frame would serve a stale HUD until something else
+       happened to change. Drop it. */
+    instance->last_render_valid = 0;
+    return render_current_frame(instance, error, error_capacity);
+}
+
 uint32_t simcity_recomp_current_frame(const SimCityRecomp *instance) {
     return instance && instance->runtime ?
            instance->runtime->scheduler.frame : 0u;
@@ -1146,6 +1184,15 @@ int simcity_recomp_read_wram(const SimCityRecomp *instance,
     if(start>sizeof(instance->runtime->machine.wram) ||
        length>sizeof(instance->runtime->machine.wram)-start) return 0;
     if(length) memcpy(destination,instance->runtime->machine.wram+start,length);
+    return 1;
+}
+
+int simcity_recomp_read_oam(const SimCityRecomp *instance,
+                            uint8_t *destination,
+                            size_t length) {
+    if(!instance || !instance->runtime || !destination) return 0;
+    if(length>SC_OAM_SIZE) return 0;
+    memcpy(destination,instance->runtime->machine.oam,length);
     return 1;
 }
 

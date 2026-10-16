@@ -14,6 +14,17 @@
 #define SIMCITY_MOUSE_SENS_MIN 1
 #define SIMCITY_MOUSE_SENS_MAX 64
 
+/* Signed HUD X offset bounds, in pixels. Two margins wide in each direction so
+   the HUD can be walked all the way into either added area. Mirrors
+   SIMCITY_RECOMP_HUD_SHIFT_MIN/MAX in the core, which is the authority. */
+#define SIMCITY_HUD_SHIFT_MIN (-142)
+#define SIMCITY_HUD_SHIFT_MAX (142)
+
+/* Default for the HUD offset. It cancels the widened map margin exactly, and
+   the renderer applies it only in the widened city view, so this is the wide
+   default rather than a global one. */
+#define SIMCITY_HUD_SHIFT_DEFAULT (-71)
+
 typedef enum {
     SIMCITY_RENDERER_AUTO = 0,       /* try accelerated, fallback to software */
     SIMCITY_RENDERER_SOFTWARE,
@@ -41,6 +52,7 @@ typedef struct {
     int width;
     int height;
     int widescreen;
+    int hud_shift_x;
     int soft_mouse;
     int mouse_sens;
     int freeze_money;

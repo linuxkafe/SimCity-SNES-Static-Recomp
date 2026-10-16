@@ -16,6 +16,7 @@
 typedef enum {
     ROW_RESOLUTION = 0,
     ROW_WIDESCREEN,
+    ROW_HUD_SHIFT_X,
     ROW_SOFT_MOUSE,
     ROW_MOUSE_SENS,
     ROW_COLOR,
@@ -102,6 +103,13 @@ static void adjust_row(SimCityMenu *menu, int row, int direction)
         }
         case ROW_WIDESCREEN:
             c->widescreen = !c->widescreen;
+            break;
+        case ROW_HUD_SHIFT_X:
+            c->hud_shift_x += direction;
+            if (c->hud_shift_x < SIMCITY_HUD_SHIFT_MIN)
+                c->hud_shift_x = SIMCITY_HUD_SHIFT_MIN;
+            if (c->hud_shift_x > SIMCITY_HUD_SHIFT_MAX)
+                c->hud_shift_x = SIMCITY_HUD_SHIFT_MAX;
             break;
         case ROW_SOFT_MOUSE:
             c->soft_mouse = !c->soft_mouse;
@@ -319,6 +327,9 @@ static void value_text(const SimCityMenu *menu, int row, char *out, size_t cap)
         case ROW_WIDESCREEN:
             snprintf(out, cap, "%s", c->widescreen ? "ON" : "OFF");
             break;
+        case ROW_HUD_SHIFT_X:
+            snprintf(out, cap, "%+d", c->hud_shift_x);
+            break;
         case ROW_SOFT_MOUSE:
             snprintf(out, cap, "%s", c->soft_mouse ? "ON" : "OFF");
             break;
@@ -453,8 +464,8 @@ static void draw_cheats(SimCityMenu *menu, int window_w, int window_h)
 void simcity_menu_draw(SimCityMenu *menu, int window_w, int window_h)
 {
     static const char *const kLabels[ROW_COUNT] = {
-        "RESOLUTION", "WIDESCREEN", "SOFT MOUSE", "MOUSE SENS", "COLOR",
-        "CHEATS", "RESUME", "QUIT"
+        "RESOLUTION", "WIDESCREEN", "HUD SHIFT X", "SOFT MOUSE", "MOUSE SENS",
+        "COLOR", "CHEATS", "RESUME", "QUIT"
     };
     static const SDL_Color kPanel = { 16, 16, 16, 236 };
     static const SDL_Color kText  = { 250, 250, 250, 255 };

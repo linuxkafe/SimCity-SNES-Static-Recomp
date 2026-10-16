@@ -159,6 +159,27 @@ uint32_t simcity_recomp_frame_width(const SimCityRecomp *instance);
 int simcity_recomp_widescreen_enabled(const SimCityRecomp *instance);
 int simcity_recomp_set_widescreen(SimCityRecomp *instance, int enabled,
                                    char *error, size_t error_capacity);
+
+/* Signed X offset in pixels applied to HUD chrome in the widened city view.
+   The in-game HUD is OAM sprites that the guest places in native screen space,
+   so the widened map margin displaces it. No OAM field separates chrome from
+   world objects, so the placement is the player's choice rather than the
+   renderer's guess. 0 (the default) reproduces the unmodified behaviour;
+   -SIMCITY_RECOMP_WIDESCREEN_MARGIN returns the HUD to its native column.
+   Ignored while widescreen is off, where the HUD is already correct.
+   Values outside the bounds below are rejected and leave the setting alone. */
+#define SIMCITY_RECOMP_HUD_SHIFT_MIN (-(int)SIMCITY_RECOMP_WIDESCREEN_MARGIN * 2)
+#define SIMCITY_RECOMP_HUD_SHIFT_MAX  ((int)SIMCITY_RECOMP_WIDESCREEN_MARGIN * 2)
+
+/* Cancels the widened map margin exactly, returning the HUD to the columns the
+   guest placed it on. Frontends default to this; it is a *wide* default, since
+   the renderer ignores the offset outside expand_city_view. 0 reproduces the
+   pre-T050 displaced position. */
+#define SIMCITY_RECOMP_HUD_SHIFT_DEFAULT (-(int)SIMCITY_RECOMP_WIDESCREEN_MARGIN)
+
+int simcity_recomp_hud_shift_x(const SimCityRecomp *instance);
+int simcity_recomp_set_hud_shift_x(SimCityRecomp *instance, int pixels,
+                                   char *error, size_t error_capacity);
 uint32_t simcity_recomp_current_frame(const SimCityRecomp *instance);
 uint64_t simcity_recomp_instruction_count(const SimCityRecomp *instance);
 uint64_t simcity_recomp_master_clock(const SimCityRecomp *instance);
@@ -170,6 +191,15 @@ int simcity_recomp_read_wram(const SimCityRecomp *instance,
                              uint32_t offset,
                              void *destination,
                              size_t length);
+
+/* Bounds-checked read of the 544-byte OAM image (128 sprites x 4 bytes followed
+   by the 32-byte high table that carries name select, X bit 8 and size).
+   Read-only: it never modifies emulated state.  Exposed so host-side
+   instrumentation can classify sprites by identity instead of guessing from
+   screen position. */
+int simcity_recomp_read_oam(const SimCityRecomp *instance,
+                            uint8_t *destination,
+                            size_t length);
 
 /* Bounds-checked write to the native 128 KiB SNES WRAM image, for host-side
    cheats and mods applied between frames.

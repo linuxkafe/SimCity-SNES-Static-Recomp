@@ -188,6 +188,20 @@ static void apply_config_to_frontend(void)
                 fprintf(stderr, "widescreen change failed: %s\n", ws_error);
             simcity_menu_res_size(SIMCITY_MENU_RES_COUNT - 1, &w, &h);
         }
+        /* The HUD offset is a presentation setting like widescreen itself: it
+           is applied by the renderer, so the core has to be told about it even
+           when widescreen is off (the core ignores it there). */
+        {
+            int want_hud = g_config.hud_shift_x;
+            if (want_hud != simcity_recomp_hud_shift_x(g_recomp)) {
+                char hud_error[256];
+                memset(hud_error, 0, sizeof(hud_error));
+                if (simcity_recomp_set_hud_shift_x(g_recomp, want_hud,
+                                                   hud_error,
+                                                   sizeof(hud_error)) != 1)
+                    fprintf(stderr, "HUD offset change failed: %s\n", hud_error);
+            }
+        }
         /* Texture geometry follows the widescreen flag. */
         {
             int tw = g_config.widescreen ? SIMCITY_RECOMP_WIDESCREEN_WIDTH

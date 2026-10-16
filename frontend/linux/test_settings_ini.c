@@ -86,6 +86,14 @@ int main(void)
        stack held.  A default that is not written down is not a default. */
     CHECK(config.renderer == (SimCityRenderer)SIMCITY_RENDERER_AUTO,
           "default renderer is AUTO");
+    /* The HUD offset default must cancel the widened map margin, so the shipped
+       default is the corrected position rather than the displaced one. The
+       renderer gates it on expand_city_view, so this says nothing about the
+       native frame. */
+    CHECK(config.hud_shift_x == SIMCITY_HUD_SHIFT_DEFAULT,
+          "default HUD offset cancels the map margin");
+    CHECK(config.hud_shift_x == -71,
+          "default HUD offset is -71 px");
     /* SWAP_RB is the default: it is what reads correctly on the Steam Deck. */
     CHECK((int)config.color_mode == (int)SIMCITY_COLOR_SWAP_RB,
           "default colour mode is SWAP_RB");
@@ -93,6 +101,7 @@ int main(void)
     /* Round trip of our own keys. */
     config.width = 1024; config.height = 768;
     config.widescreen = 0; config.soft_mouse = 1;
+    config.hud_shift_x = -71;   /* the value that returns the HUD to native */
     config.mouse_sens = 7; config.freeze_money = 1;
     config.renderer = SIMCITY_RENDERER_OPENGL;
     CHECK(simcity_settings_ini_save(path, &config) == 1, "save succeeds");
@@ -102,6 +111,35 @@ int main(void)
     CHECK(loaded.mouse_sens == 7, "sens round trips");
     CHECK(loaded.freeze_money == 1, "cheat flag round trips");
     CHECK(loaded.renderer == SIMCITY_RENDERER_OPENGL, "renderer round trips");
+    CHECK(loaded.hud_shift_x == -71, "HUD offset round trips, sign included");
+
+    /* The offset is signed and must survive both extremes and a clamp. A file
+       carrying a value beyond the bounds must not be able to drive the core
+       into an out-of-range offset, which it rejects. */
+    {
+        static const int kCases[] = { SIMCITY_HUD_SHIFT_MIN,
+                                       SIMCITY_HUD_SHIFT_MAX,
+                                       -1, 0, 1 };
+        size_t k;
+        for (k = 0; k < sizeof(kCases) / sizeof(kCases[0]); ++k) {
+            SimCityLinuxConfig r;
+            simcity_linux_config_defaults(&r);
+            r.hud_shift_x = kCases[k];
+            CHECK(simcity_settings_ini_save(path, &r) == 1, "HUD offset save succeeds");
+            CHECK(simcity_settings_ini_load(path, &loaded) == 1, "HUD offset load succeeds");
+            CHECK(loaded.hud_shift_x == kCases[k], "HUD offset survives the round trip");
+        }
+        write_file(path, "[General]\nHudShiftX=9999\n");
+        CHECK(simcity_settings_ini_load(path, &loaded) == 1, "oversized offset loads");
+        CHECK(loaded.hud_shift_x == SIMCITY_HUD_SHIFT_MAX, "oversized offset clamps");
+        write_file(path, "[General]\nHudShiftX=-9999\n");
+        CHECK(simcity_settings_ini_load(path, &loaded) == 1, "undersized offset loads");
+        CHECK(loaded.hud_shift_x == SIMCITY_HUD_SHIFT_MIN, "undersized offset clamps");
+        write_file(path, "[Display]\nHudShiftX=50\n");
+        CHECK(simcity_settings_ini_load(path, &loaded) == 1, "HUD offset in [Display] loads");
+        CHECK(loaded.hud_shift_x == SIMCITY_HUD_SHIFT_DEFAULT,
+              "HUD offset is Linux-owned: ignored outside [General]");
+    }
 
     /* Regression T022: format_owned_value() had no Renderer branch and fell
        through to the trailing `else`, writing freeze_money's value under the

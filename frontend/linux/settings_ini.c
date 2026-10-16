@@ -21,6 +21,13 @@ void simcity_linux_config_defaults(SimCityLinuxConfig *config)
     config->width = 1280;
     config->height = 800;
     config->widescreen = 1;
+    /* -71 undoes exactly the displacement the widened map margin puts on HUD
+       chrome, putting the status bar, toolbar and message box back on the
+       columns the guest placed them on. It is the *wide* default, not a global
+       one: the renderer applies it only while expand_city_view is active, so
+       the native 4:3 frame is untouched whatever this is set to. A user who
+       prefers the displaced position writes HudShiftX=0. */
+    config->hud_shift_x = SIMCITY_HUD_SHIFT_DEFAULT;
     config->soft_mouse = 1;
     config->mouse_sens = 2;
     config->freeze_money = 0;
@@ -124,6 +131,9 @@ int simcity_settings_ini_load(const char *path, SimCityLinuxConfig *config)
             else if (strcmp(line, "Widescreen") == 0 &&
                      (in_general(section) || in_display(section)))
                 config->widescreen = value != 0;
+            else if (strcmp(line, "HudShiftX") == 0 && in_general(section))
+                config->hud_shift_x = clamp_int(value, SIMCITY_HUD_SHIFT_MIN,
+                                               SIMCITY_HUD_SHIFT_MAX);
             else if (strcmp(line, "SoftMouse") == 0 && in_general(section))
                 config->soft_mouse = value != 0;
             else if (strcmp(line, "MouseSens") == 0 && in_general(section))
@@ -165,7 +175,7 @@ int simcity_settings_ini_load(const char *path, SimCityLinuxConfig *config)
 static const char kBanner[] = "; SimCity SNES Static Recomp settings.\n";
 
 static const char *const owned_keys[] = {
-    "Width", "Height", "Widescreen", "SoftMouse", "MouseSens", "FreezeMoney",
+    "Width", "Height", "Widescreen", "HudShiftX", "SoftMouse", "MouseSens", "FreezeMoney",
     "MoneyNeverDecrease", "EarnPerBuild", "TimeFaster", "TimeSlower",
     "AllPower", "DemolishAnything", "Renderer", "ColorMode"
 };
@@ -197,6 +207,7 @@ static void format_owned_value(const SimCityLinuxConfig *config,
     if (strcmp(name, "Width") == 0)               snprintf(out, cap, "%d", config->width);
     else if (strcmp(name, "Height") == 0)         snprintf(out, cap, "%d", config->height);
     else if (strcmp(name, "Widescreen") == 0)     snprintf(out, cap, "%d", config->widescreen != 0);
+    else if (strcmp(name, "HudShiftX") == 0)      snprintf(out, cap, "%d", config->hud_shift_x);
     else if (strcmp(name, "SoftMouse") == 0)      snprintf(out, cap, "%d", config->soft_mouse != 0);
     else if (strcmp(name, "MouseSens") == 0)      snprintf(out, cap, "%d", config->mouse_sens);
     else if (strcmp(name, "FreezeMoney") == 0)    snprintf(out, cap, "%d", config->freeze_money != 0);
