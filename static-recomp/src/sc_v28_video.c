@@ -664,14 +664,20 @@ static void object_line(const PpuLineView *view, unsigned y,
         }
         else {
             display_x = object_x + sprite_shift_x;
-            /* HUD chrome (status bar, construction toolbar, message box) is
-               placed by the game in native screen space, so the blanket map
-               margin displaces it by left_margin. No OAM field separates chrome
-               from world objects -- index, y band, priority and palette all
-               overlap -- so the remaining correction is the player's. Entries
-               below SC_HUD_CHROME_FIRST_OAM are the map cursor and its
-               footprint and must keep following the map. */
-            if (hud_shift_x && index >= SC_HUD_CHROME_FIRST_OAM)
+            /* HUD chrome (status bar, construction toolbar, message box,
+               tutorial panel) is placed by the game in native screen space,
+               so the blanket map margin displaces it. No OAM *field* separates
+               chrome from world objects, but the guest does mark the one
+               exception in WRAM: cursor_object above is true only for the map
+               cursor while map focus is active. Everything else that is live is
+               chrome, and taking the offset is what keeps the toolbar, the tool
+               cursor and multi-entry panel sprites whole and aligned with the
+               layers they belong to.
+
+               This deliberately does not test the OAM index. An index test
+               splits any chrome sprite that straddles the boundary -- the
+               tutorial mayor spans OAM 0..27 and was torn in half by it. */
+            if (hud_shift_x && !cursor_object)
                 display_x += hud_shift_x;
         }
         if (cursor_object) display_y += cursor_shift_y;

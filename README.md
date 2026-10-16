@@ -142,21 +142,20 @@ that margin so world objects stay registered with the map. That same 71 px also
 moves the HUD, which is why the toolbar sits away from the edge when widescreen
 is on and is correctly placed when it is off.
 
-No field in an OAM entry separates HUD chrome from world objects: index, y band,
-priority and palette all overlap. There is nothing for the renderer to key on,
-so where the HUD sits is a presentation choice and it is exposed as one rather
-than guessed at.
+No field in an *OAM entry* separates HUD chrome from world objects: index, y
+band, priority and palette all overlap. The guest does mark the one exception
+in WRAM, though — while map focus is active, OAM 0–3 are the map cursor, and
+everything else that is live is chrome. The renderer therefore takes the offset
+for every sprite except the map cursor, which keeps its own map-registered
+displacement.
+
+No OAM index threshold is used to make that split. One would tear any chrome
+sprite straddling it, and one did: the tutorial mayor spans OAM 0..27 and was
+split down the middle by an earlier index-based rule.
 
 The value is in pixels, applies only while widescreen is on, and leaves the city
 map itself untouched: at `-71` the map region is pixel-identical, and the map
 cursor keeps its own displacement.
-
-**Known issue (T054):** because the offset is applied to chrome only, the
-toolbar and the map cursor no longer share a displacement. With the shipped
-`-71` default the toolbar sits at its native column while the cursor stays at
-native + 71, so the cursor does not appear on the tools even though the guest
-still performs the selection at the leftmost corner. Writing `HudShiftX=0`
-restores alignment at the cost of the displaced toolbar.
 
 It ships defaulted to `-71`, which cancels the margin exactly and is what a
 player sees on a fresh install. `headless-profile --hud-shift 0` does the same

@@ -30,12 +30,12 @@ typedef struct SCV28VideoReport {
     char error[192];
 } SCV28VideoReport;
 
-/* hud_shift_x is a user-controlled X offset in pixels applied to HUD chrome
-   (OAM entries at or above SC_HUD_CHROME_FIRST_OAM) in the widened city view.
-   It exists because chrome and world objects share OAM with no field that
-   separates them, so the choice of where the HUD sits is the player's. It is
-   ignored when left_margin is 0, so the native 4:3 frame never moves. */
-#define SC_HUD_CHROME_FIRST_OAM 4u
+/* hud_shift_x is a user-controlled X offset in pixels applied to HUD chrome in
+   the widened city view. Chrome is everything that is not the map cursor,
+   which the renderer already identifies via the guest's map-focus flag; no OAM
+   index threshold is used, because one tears multi-entry chrome sprites that
+   straddle it. It is ignored when left_margin is 0, so the native 4:3 frame
+   never moves. */
 
 int sc_v28_render_first_visible_frame(const SCV11Runtime *runtime,
                                       unsigned output_width,
