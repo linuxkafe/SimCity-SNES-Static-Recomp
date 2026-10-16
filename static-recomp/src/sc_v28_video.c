@@ -583,6 +583,7 @@ static PpuObject decode_object(const PpuLineView *view, unsigned index) {
 static void object_line(const PpuLineView *view, unsigned y,
                         unsigned output_width, unsigned left_margin,
                         int cursor_shift_x, int cursor_shift_y,
+                        int sprite_shift_x,
                         uint8_t palettes[SC_V28_MAX_FRAME_WIDTH],
                         uint8_t priorities[SC_V28_MAX_FRAME_WIDTH]) {
     PpuObjectLine items[32];
@@ -607,7 +608,7 @@ static void object_line(const PpuLineView *view, unsigned y,
            native_camera_x - display_left_x (71 px = 8.875 cells while the
            camera is unclamped). Only the map cursor used to get it, which
            left the train sitting about nine cells left of its own track. */
-        int display_x = object_x + cursor_shift_x;
+        int display_x = object_x;
         int display_y = (int)object.y;
         int cursor_object = read_wram16(0x0201u) == 0x00ffu && index < 4u;
         int cursor_x = (int)(int16_t)read_wram16(0x025du);
@@ -623,7 +624,10 @@ static void object_line(const PpuLineView *view, unsigned y,
             display_x = (int)object.x + cursor_shift_x;
         }
         else if (cursor_object && (cursor_shift_x || cursor_shift_y)) {
-            display_x += cursor_extension;
+            display_x += cursor_shift_x + cursor_extension;
+        }
+        else {
+            display_x = object_x + sprite_shift_x;
         }
         if (cursor_object) display_y += cursor_shift_y;
         line = (uint8_t)((int)y + 1 - display_y);
@@ -974,6 +978,13 @@ static int render_lines_impl(const SCV11Runtime *runtime,
                                 (int)SC_V11_PPU_VISIBLE_LINES;
         int cursor_shift_x = 0;
         int cursor_shift_y = 0;
+        /* Displacement every sprite needs so it stays registered with the map.
+           In the widened view world x = 0 lands at screen x = left_margin, so
+           a sprite drawn at its original OAM position must move by exactly
+           that margin. This is deliberately NOT cursor_shift_x: that term
+           additionally folds in the camera clamp and therefore grows while
+               scrolling, which slid the train and toolbar progressively. */
+        int sprite_shift_x = 0;
         unsigned object_left_margin = left_margin;
 
         if (display_left_x < 0) display_left_x = 0;
@@ -985,6 +996,7 @@ static int render_lines_impl(const SCV11Runtime *runtime,
         if (expand_city_view) {
             object_left_margin = 0u;
             cursor_shift_x = native_camera_x - display_left_x;
+            sprite_shift_x = (int)left_margin;
             cursor_shift_y = native_camera_y - display_top_y;
         }
 
@@ -1009,7 +1021,7 @@ static int render_lines_impl(const SCV11Runtime *runtime,
                               &bg_setups[l]);
         }
         object_line(&view, y, output_width, object_left_margin,
-                    cursor_shift_x, cursor_shift_y,
+                    cursor_shift_x, cursor_shift_y, sprite_shift_x,
                     object_palette, object_priority_value);
         for (x = x_begin; x < x_end; ++x) {
             int source_x = (int)x - (int)left_margin;
