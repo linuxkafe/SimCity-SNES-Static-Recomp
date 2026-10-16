@@ -50,3 +50,32 @@ environment because the headless run never reaches a live city, where the
 camera and the OAM positions are first populated. The three checks above are
 cheap and discriminate the hypotheses; the fix should not be applied until at
 least check 1 comes back negative.
+---
+
+## Resolution (supersedes the proposal above)
+
+**CONFIRMED by the user:** turning widescreen off removes the defect, so the
+map/sprite registration in `expand_city_view` is the cause.
+
+The first fix was wrong. It gave every sprite `cursor_shift_x`, which is
+`native_camera_x - display_left_x`. That term equals `left_margin` only while
+the camera is unclamped; once the camera reaches the left edge of the map
+`display_left_x` clamps to zero and the term becomes `native_camera_x`, which
+grows with every scroll.
+
+The user described the result as "constant and incremental when moving, and it
+moves the opposite way when I press B" — a precise signature of a
+clamp-dependent term being used where a constant one belongs.
+
+The applied fix separates the two:
+
+| Consumer | Term | Why |
+|---|---|---|
+| Every non-cursor sprite | `left_margin` (constant 71) | the displacement the map itself received when the view was widened |
+| Map cursor | `cursor_shift_x + cursor_extension` | genuinely encodes the camera clamp |
+
+Verified against the pre-T044 build: all 336 sampled frame hashes identical,
+since `left_margin` is zero outside the widened view. All 8 gates pass.
+
+Still open: whether the cursor itself is correctly placed on the map in the
+widened view. That is not verifiable headlessly and needs a look on hardware.
