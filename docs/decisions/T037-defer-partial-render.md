@@ -55,3 +55,22 @@ If any of these become true, reopen:
 - Headless verification reaches stable scrolling city (funds > 0 sustained)
 - Render time exceeds 8ms sustained (currently 5-6ms)
 - Emulation optimized below 8ms making render the new bottleneck
+
+---
+
+## SUPERSEDED by T039 (see T039-render-is-the-bottleneck.md)
+
+T039 re-derived the measurement and showed this record's central premise is
+**false**. Direct measurement of `simcity_recomp_advance_headless()`:
+
+- Pure emulation: **3.57 ms/frame**
+- Rendering: **~8.6 ms/frame** (~71 % of the frame)
+
+The `adv`/`render` split printed by `headless-profile` was invalid because
+`simcity_recomp_advance()` performs the real render internally and the tool's
+separate render call then hits the frame cache.
+
+Therefore "the render path is not the limiter" is **SUPORTADA as false**, and
+T030 B6 (dirty-tile partial render) is the highest-value remaining optimisation.
+This decision is reopened under corrected premises. The analysis below is kept
+for the record only.
