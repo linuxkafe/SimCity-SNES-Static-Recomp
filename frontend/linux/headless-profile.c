@@ -43,6 +43,7 @@ static int g_shot_every = 30;
 static int g_window_start = -1;
 static int g_window_end = -1;
 static uint32_t g_dump_pc_rows = 30;
+static int g_no_pc_profile = 0;
 static int g_print_hash = 0;
 static int g_per_frame = 0;
 static int g_no_render = 0;
@@ -310,6 +311,7 @@ static void print_usage(const char *argv0)
     fprintf(stderr, "  --shot-every N    screenshot every N frames (default 30)\n");
     fprintf(stderr, "  --window A:B      reset profiler at frame A, dump at B\n");
     fprintf(stderr, "  --dump-pc N       PC histogram rows (default 30)\n");
+    fprintf(stderr, "  --no-pc-profile   disable per-instruction PC histogram (timing only)\n");
     fprintf(stderr, "  --hash            print a line whenever the screen changes\n");
     fprintf(stderr, "  --per-frame       print 'pf <frame> <us> <instr>' per frame\n");
     fprintf(stderr, "  --watch OFFSET    print a WRAM 16-bit value whenever it changes\n");
@@ -339,6 +341,8 @@ int main(int argc, char **argv)
             g_shot_every = atoi(argv[++i]);
         } else if (!strcmp(arg, "--dump-pc") && i + 1 < argc) {
             g_dump_pc_rows = (uint32_t)atoi(argv[++i]);
+        } else if (!strcmp(arg, "--no-pc-profile")) {
+            g_no_pc_profile = 1;
         } else if (!strcmp(arg, "--hash")) {
             g_print_hash = 1;
         } else if (!strcmp(arg, "--no-render")) {
@@ -464,6 +468,7 @@ int main(int argc, char **argv)
     }
 
     sc_sim_profiler_init();
+    if (g_no_pc_profile) g_sim_profiling_enabled = 0;
     fprintf(stderr, "Profiling %d frames, %d input transition(s)%s...\n",
             frames, g_transition_count, g_shot_dir ? " + screenshots" : "");
 
@@ -481,7 +486,8 @@ int main(int argc, char **argv)
         double frame_seconds;
 
         if (g_window_start >= 0 && i == g_window_start) {
-            sc_sim_profiler_init();
+sc_sim_profiler_init();
+    if (g_no_pc_profile) g_sim_profiling_enabled = 0;
             fprintf(stderr, "  profile window opened at frame %d\n", i);
         }
 
