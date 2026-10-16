@@ -357,22 +357,66 @@ static int city_background_pixel(const PpuLineView *view, unsigned layer,
     return 1;
 }
 
-static int background_pixel(const PpuLineView *view, unsigned layer,
-                            int x, unsigned y, PpuPixel *pixel) {
-    unsigned mode = view_reg(view, 0x2105u) & 7u;
-    unsigned bpp = bg_bpp(mode, layer);
-    uint8_t bgmode = view_reg(view, 0x2105u);
-    uint8_t sc;
-    uint8_t nba;
+/* Per-line, per-layer background constants. These depend only on the PPU
+   registers latched for the scanline, so they are identical for every pixel
+   of that line. Computing them once per line instead of once per pixel was
+   worth a large fraction of render time, because background_pixel runs about
+   170k times per frame. */
+typedef struct {
+    unsigned valid;
+    unsigned bpp;
+    uint8_t bgmode;
     unsigned tile_size;
     unsigned tile_shift;
     unsigned map_width;
     unsigned map_height;
     unsigned world_width;
     unsigned world_height;
+    uint32_t map_base;
+    uint32_t char_base;
+    unsigned mosaic_size;
+    uint8_t mosaic_enable;
+    unsigned screen_tiles;   /* map_width == 64 ? 2 : 1 */
+} BgLineSetup;
+
+static void bg_line_setup(const PpuLineView *view, unsigned layer,
+                          unsigned mode, BgLineSetup *setup) {
+    uint8_t sc;
+    uint8_t nba;
+    memset(setup, 0, sizeof(*setup));
+    setup->bpp = bg_bpp(mode, layer);
+    if (layer >= 4u || setup->bpp == 0u) return;
+    setup->bgmode = view_reg(view, 0x2105u);
+    sc = view_reg(view, (uint16_t)(0x2107u + layer));
+    setup->map_width = (sc & 1u) ? 64u : 32u;
+    setup->map_height = (sc & 2u) ? 64u : 32u;
+    setup->screen_tiles = setup->map_width == 64u ? 2u : 1u;
+    setup->map_base = (uint32_t)(sc & 0xfcu) << 9;
+    nba = view_reg(view, layer < 2u ? 0x210bu : 0x210cu);
+    setup->char_base = (uint32_t)((layer & 1u) ? (nba >> 4) : (nba & 15u)) << 13;
+    setup->tile_size = (setup->bgmode & (uint8_t)(0x10u << layer)) ? 16u : 8u;
+    if (mode == 5u || mode == 6u) setup->tile_size = 16u;
+    setup->tile_shift = setup->tile_size == 16u ? 4u : 3u;
+    setup->world_width = setup->map_width * setup->tile_size;
+    setup->world_height = setup->map_height * setup->tile_size;
+    setup->mosaic_size = ((unsigned)view_reg(view, 0x2106u) >> 4) + 1u;
+    setup->mosaic_enable = (uint8_t)((view_reg(view, 0x2106u) & (1u << layer)) != 0u);
+    setup->valid = 1u;
+}
+
+static int background_pixel(const PpuLineView *view, const BgLineSetup *bg,
+                            unsigned layer,
+                            int x, unsigned y, PpuPixel *pixel) {
+    unsigned mode = view_reg(view, 0x2105u) & 7u;
+    unsigned bpp = bg->bpp;
+    unsigned tile_size = bg->tile_size;
+    unsigned tile_shift = bg->tile_shift;
+    unsigned map_width = bg->map_width;
+    unsigned world_width = bg->world_width;
+    unsigned world_height = bg->world_height;
     int sample_x = x;
     unsigned sample_y = y + 1u;
-    unsigned mosaic_size;
+    unsigned mosaic_size = bg->mosaic_size;
     uint32_t map_base;
     uint32_t char_base;
     uint32_t world_x, world_y, tile_x, tile_y, px, py;
@@ -394,18 +438,8 @@ static int background_pixel(const PpuLineView *view, unsigned layer,
         sample_y -= sample_y % mosaic_size;
     }
 
-    sc = view_reg(view, (uint16_t)(0x2107u + layer));
-    map_width = (sc & 1u) ? 64u : 32u;
-    map_height = (sc & 2u) ? 64u : 32u;
-    map_base = (uint32_t)(sc & 0xfcu) << 9;
-    nba = view_reg(view, layer < 2u ? 0x210bu : 0x210cu);
-    char_base = (uint32_t)((layer & 1u) ? (nba >> 4) : (nba & 15u)) << 13;
-    tile_size = (bgmode & (uint8_t)(0x10u << layer)) ? 16u : 8u;
-    if (mode == 5u || mode == 6u) tile_size = 16u;
-    /* log2(tile_size): 8 -> 3, 16 -> 4. */
-    tile_shift = tile_size == 16u ? 4u : 3u;
-    world_width = map_width * tile_size;
-    world_height = map_height * tile_size;
+    map_base = bg->map_base;
+    char_base = bg->char_base;
     world_x = wrap_coordinate(sample_x + (int)view->scroll[layer * 2u],
                               world_width);
     world_y = (sample_y + view->scroll[layer * 2u + 1u]) & (world_height - 1u);
@@ -414,7 +448,7 @@ static int background_pixel(const PpuLineView *view, unsigned layer,
     px = world_x & (tile_size - 1u);
     py = world_y & (tile_size - 1u);
 
-    screen_index = (tile_y >> 5) * (map_width == 64u ? 2u : 1u) +
+    screen_index = (tile_y >> 5) * bg->screen_tiles +
                    (tile_x >> 5);
     map_address = map_base + screen_index * 0x800u +
                   (((tile_y & 31u) * 32u + (tile_x & 31u)) * 2u);
@@ -440,7 +474,7 @@ static int background_pixel(const PpuLineView *view, unsigned layer,
 
     pixel->transparent = 0u;
     pixel->priority = bg_priority(mode, layer, (entry >> 13) & 1u,
-                                  (bgmode & 0x08u) != 0u);
+                                  (bg->bgmode & 0x08u) != 0u);
     pixel->layer = (uint8_t)layer;
     pixel->palette_index = color;
     if (bpp == 2u) {
@@ -656,7 +690,8 @@ static int region_applies(unsigned setting, int inside_color_window) {
     return 1;
 }
 
-static PpuPixel screen_pixel(const PpuLineView *view, unsigned screen_mask,
+static PpuPixel screen_pixel(const PpuLineView *view, const BgLineSetup *bg,
+                             unsigned screen_mask,
                              unsigned window_enable, int x, unsigned y,
                              uint8_t obj_palette, uint8_t obj_priority_value) {
     PpuPixel best;
@@ -675,7 +710,8 @@ static PpuPixel screen_pixel(const PpuLineView *view, unsigned screen_mask,
             continue;
         if ((window_enable & (1u << layer)) && window_mask(view, layer, x))
             continue;
-        if (!background_pixel(view, layer, x, y, &candidate)) continue;
+        if (!background_pixel(view, &bg[layer], layer, x, y, &candidate))
+            continue;
         if (!candidate.transparent && candidate.priority > best.priority)
             best = candidate;
     }
@@ -696,6 +732,7 @@ static PpuPixel screen_pixel(const PpuLineView *view, unsigned screen_mask,
 }
 
 static PpuPixel city_screen_pixel(const PpuLineView *view,
+                                  const BgLineSetup *bg,
                                   unsigned screen_mask,
                                   unsigned window_enable,
                                   int source_x, int city_source_x,
@@ -730,7 +767,8 @@ static PpuPixel city_screen_pixel(const PpuLineView *view,
                                        city_source_y,
                                        &candidate))
                 continue;
-        } else if (!background_pixel(view, layer, source_x, y, &candidate)) {
+        } else if (!background_pixel(view, &bg[layer], layer, source_x, y,
+                                    &candidate)) {
             continue;
         }
         if (!candidate.transparent && candidate.priority > best.priority)
@@ -809,6 +847,7 @@ static int render_lines_impl(const SCV11Runtime *runtime,
     unsigned y, x;
     uint8_t object_palette[SC_V28_MAX_FRAME_WIDTH];
     uint8_t object_priority_value[SC_V28_MAX_FRAME_WIDTH];
+    BgLineSetup bg_setups[4];
     unsigned supported_lines = 0u;
     unsigned scanline_states = 0u;
     int expand_city_view;
@@ -908,6 +947,12 @@ static int render_lines_impl(const SCV11Runtime *runtime,
         supported_lines++;
         if (forced_blank) continue;
 
+        {
+            unsigned l;
+            for (l = 0u; l < 4u; ++l)
+                bg_line_setup(&view, l, view_reg(&view, 0x2105u) & 7u,
+                              &bg_setups[l]);
+        }
         object_line(&view, y, output_width, object_left_margin,
                     cursor_shift_x, cursor_shift_y,
                     object_palette, object_priority_value);
@@ -924,10 +969,10 @@ static int render_lines_impl(const SCV11Runtime *runtime,
                 in_margin)
                 continue;
             PpuPixel main_pixel = expand_city_view
-                ? city_screen_pixel(&view, main_mask, main_windows,
+                ? city_screen_pixel(&view, bg_setups, main_mask, main_windows,
                                     (int)x, city_source_x, city_source_y, y,
                                     object_palette[x], object_priority_value[x])
-                : screen_pixel(&view, main_mask, main_windows, source_x, y,
+                : screen_pixel(&view, bg_setups, main_mask, main_windows, source_x, y,
                                object_palette[x], object_priority_value[x]);
             PpuPixel sub_pixel;
             uint16_t color = main_pixel.color;
@@ -940,11 +985,11 @@ static int render_lines_impl(const SCV11Runtime *runtime,
             if (clip_main) color = 0u;
             if (cgwsel & 0x02u) {
                 sub_pixel = expand_city_view
-                    ? city_screen_pixel(&view, sub_mask, sub_windows,
+                    ? city_screen_pixel(&view, bg_setups, sub_mask, sub_windows,
                                         (int)x, city_source_x, city_source_y, y,
                                         object_palette[x],
                                         object_priority_value[x])
-                    : screen_pixel(&view, sub_mask, sub_windows, source_x, y,
+                    : screen_pixel(&view, bg_setups, sub_mask, sub_windows, source_x, y,
                                    object_palette[x],
                                    object_priority_value[x]);
                 addend = sub_pixel.color;
