@@ -330,6 +330,12 @@ typedef struct {
     int cache_map_x;
     int cache_map_y;
     uint16_t cache_entry;
+    /* Tile-data cache, same shape as BgLineSetup's: the tile row is
+       determined by the effective tile within a line, and all eight pixels
+       of the row read the same plane bytes. */
+    int td_valid;
+    uint16_t td_tile;
+    uint8_t td_bytes[4];
 } CityBgSetup;
 
 typedef struct {
@@ -364,6 +370,9 @@ static void city_line_setup(const PpuLineView *view, unsigned mode,
         b->cache_map_x = -1;
         b->cache_map_y = -1;
         b->cache_entry = 0u;
+        b->td_valid = 0;
+        b->td_tile = 0u;
+        memset(b->td_bytes, 0, sizeof(b->td_bytes));
         b->valid = 1u;
     }
 }
@@ -442,9 +451,23 @@ static int city_background_pixel(const PpuLineView *view,
 
     row_address = cs->layer[layer].char_base + (uint32_t)tile * (bpp * 8u) + py * 2u;
     bit = 7u - px;
-    for (plane = 0u; plane < bpp; ++plane) {
-        uint32_t address = row_address + (plane >> 1) * 16u + (plane & 1u);
-        color |= (uint8_t)(((g_vram[address & 0xffffu] >> bit) & 1u) << plane);
+    {
+        CityBgSetup *cb = &cs->layer[layer];
+        if (cb->td_valid && cb->td_tile == tile) {
+            for (plane = 0u; plane < bpp; ++plane) {
+                color |= (uint8_t)(((cb->td_bytes[plane] >> bit) & 1u) << plane);
+            }
+        } else {
+            for (plane = 0u; plane < bpp; ++plane) {
+                uint32_t address = row_address + (plane >> 1) * 16u + (plane & 1u);
+                cb->td_bytes[plane] = g_vram[address & 0xffffu];
+            }
+            for (plane = 0u; plane < bpp; ++plane) {
+                color |= (uint8_t)(((cb->td_bytes[plane] >> bit) & 1u) << plane);
+            }
+            cb->td_valid = 1;
+            cb->td_tile = tile;
+        }
     }
     if (!color) return 1;
 
@@ -495,6 +518,15 @@ typedef struct {
     int cache_tile_x;
     int cache_tile_y;
     uint16_t cache_entry;
+    /* Tile-data cache. Within a line the tile row addressed by
+       char_base + tile*(bpp*8) + py*2 is determined by the effective tile
+       alone, and all eight pixels of that row read the same plane bytes --
+       only the bit position within the byte changes. Reading the bytes once
+       per tile row instead of once per pixel removes 2-4 scattered reads
+       from the 64 KiB g_vram per pixel per layer. */
+    int td_valid;
+    uint16_t td_tile;
+    uint8_t td_bytes[4];
     uint32_t map_base;
     uint32_t char_base;
     unsigned mosaic_size;
@@ -533,6 +565,9 @@ static void bg_line_setup(const PpuLineView *view, unsigned layer,
     setup->cache_tile_x = -1;
     setup->cache_tile_y = -1;
     setup->cache_entry = 0u;
+    setup->td_valid = 0;
+    setup->td_tile = 0u;
+    memset(setup->td_bytes, 0, sizeof(setup->td_bytes));
     setup->mosaic_size = ((unsigned)view_reg(view, 0x2106u) >> 4) + 1u;
     setup->mosaic_enable = (uint8_t)((view_reg(view, 0x2106u) & (1u << layer)) != 0u);
     setup->valid = 1u;
@@ -619,9 +654,20 @@ static int background_pixel(const PpuLineView *view, BgLineSetup *bg,
 
     row_address = char_base + (uint32_t)tile * (bpp * 8u) + py * 2u;
     bit = 7u - px;
-    for (plane = 0u; plane < bpp; ++plane) {
-        uint32_t address = row_address + (plane >> 1) * 16u + (plane & 1u);
-        color |= (uint8_t)(((g_vram[address & 0xffffu] >> bit) & 1u) << plane);
+    if (bg->td_valid && bg->td_tile == tile) {
+        for (plane = 0u; plane < bpp; ++plane) {
+            color |= (uint8_t)(((bg->td_bytes[plane] >> bit) & 1u) << plane);
+        }
+    } else {
+        for (plane = 0u; plane < bpp; ++plane) {
+            uint32_t address = row_address + (plane >> 1) * 16u + (plane & 1u);
+            bg->td_bytes[plane] = g_vram[address & 0xffffu];
+        }
+        for (plane = 0u; plane < bpp; ++plane) {
+            color |= (uint8_t)(((bg->td_bytes[plane] >> bit) & 1u) << plane);
+        }
+        bg->td_valid = 1;
+        bg->td_tile = tile;
     }
     if (!color) return 1;
 
