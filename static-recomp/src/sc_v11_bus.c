@@ -705,6 +705,79 @@ uint16_t sc_v11_bus_peek16(const SCV11Runtime *runtime, uint32_t address) {
     return (uint16_t)(low | ((uint16_t)high << 8));
 }
 
+/* ── WRAM fast path ───────────────────────────────────────────────────
+ *
+ * WRAM is the overwhelming majority of the recomp's bus traffic, and it
+ * needs none of the dispatch: it is a plain array, its access speed is a
+ * constant, and DMA is not pending in the common case. The general path
+ * walks a branch tree to find the speed, calls out to the DMA dispatcher,
+ * and then walks a second branch tree to find the array.
+ *
+ * The clock accounting is deliberately IDENTICAL to the general path: the
+ * same number of master clocks is charged for the same address, so the
+ * emulation is bit-identical and only the work around the access is
+ * removed. That matters more than it sounds -- the 3DS charges the guest
+ * for every instruction it executes, so removing instructions here is what
+ * moves the emulated clock, and removing *clock* would change what the
+ * game draws.
+ */
+
+/* The WRAM index for a WRAM-mapped address, or -1 when the address is not
+   WRAM. The two mappings are the 0x7E/0x7F banks and their low-bank
+   mirror. */
+static inline long sc_v11_wram_index(uint8_t bank, uint16_t local) {
+    if (bank == 0x7eu || bank == 0x7fu) {
+        return (long)((((size_t)(bank - 0x7eu) << 16) | local));
+    }
+    if (sc_v11_low_bank(bank) && local < 0x2000u) {
+        return (long)local;
+    }
+    return -1;
+}
+
+/* The access speed for those two mappings. sc_v11_bus_speed() returns 8 for
+   both: 0x7E/0x7F are not low banks, and the low-bank mirror below 0x2000
+   is the slow side of the bus. */
+#define SC_V11_WRAM_SPEED 8u
+
+static inline int sc_v11_bus_read8_wram(SCV11Runtime *runtime, uint32_t address,
+                                        uint8_t *out_value) {
+    long index;
+    uint8_t bank = (uint8_t)(address >> 16);
+    uint16_t local = (uint16_t)address;
+
+    /* A pending DMA has to run before the access; leave that to the general
+       path. */
+    if (runtime->machine.dma_pending_mask != 0u) return 0;
+    index = sc_v11_wram_index(bank, local);
+    if (index < 0) return 0;
+
+    /* The general path's sc_v11_access_cycle() is, with no DMA pending:
+       process_pending_dma() (a no-op) then cpu_cycle_sample() then
+       advance(speed). Identical here. */
+    sc_v11_scheduler_cpu_cycle_sample(runtime);
+    sc_v11_scheduler_advance(runtime, SC_V11_WRAM_SPEED);
+    *out_value = runtime->machine.wram[(size_t)index];
+    return 1;
+}
+
+static inline int sc_v11_bus_write8_wram(SCV11Runtime *runtime, uint32_t address,
+                                         uint8_t value) {
+    long index;
+    uint8_t bank = (uint8_t)(address >> 16);
+    uint16_t local = (uint16_t)address;
+
+    if (runtime->machine.dma_pending_mask != 0u) return 0;
+    index = sc_v11_wram_index(bank, local);
+    if (index < 0) return 0;
+
+    sc_v11_scheduler_cpu_cycle_sample(runtime);
+    sc_v11_scheduler_advance(runtime, SC_V11_WRAM_SPEED);
+    runtime->open_bus = value;
+    runtime->machine.wram[(size_t)index] = value;
+    return 1;
+}
+
 uint8_t sc_v11_bus_read8(SCV11Runtime *runtime, uint32_t address) {
     uint8_t bank; uint16_t local; uint8_t value;
     if (!runtime || runtime->route_failed) return 0u;
@@ -716,6 +789,12 @@ uint8_t sc_v11_bus_read8(SCV11Runtime *runtime, uint32_t address) {
         value=sc_v11_read_raw(runtime,address,0);
         sc_v11_scheduler_advance(runtime,4u);
         return value;
+    }
+    {
+        uint8_t fast_value;
+        if (sc_v11_bus_read8_wram(runtime, address, &fast_value)) {
+            return fast_value;
+        }
     }
     sc_v11_access_cycle(runtime, address);
     return sc_v11_read_raw(runtime, address, 0);
@@ -729,6 +808,7 @@ uint16_t sc_v11_bus_read16(SCV11Runtime *runtime, uint32_t address) {
 
 void sc_v11_bus_write8(SCV11Runtime *runtime, uint32_t address, uint8_t value) {
     if (!runtime || runtime->route_failed) return;
+    if (sc_v11_bus_write8_wram(runtime, address & 0x00ffffffu, value)) return;
     sc_v11_access_cycle(runtime, address & 0x00ffffffu);
     (void)sc_v11_write_raw(runtime, address, value, 0, 1);
 }
