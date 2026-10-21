@@ -96,6 +96,30 @@ typedef struct SCV11PpuLineState {
 } SCV11PpuLineState;
 
 typedef struct SCV11Runtime {
+    /* Hot state first.
+     *
+     * The ARM11 this core targets has an 8 KiB I-cache and a 64 KiB
+     * D-cache. The scheduler is read and written on every master clock --
+     * 357,000 times a frame -- while the PPU renderer streams 64 KiB of VRAM
+     * and 128 KiB of WRAM through the same cache between frames. With the
+     * scheduler at the far end of a 1.4 MiB structure, every one of those
+     * 357,000 accesses was a likely miss.
+     *
+     * These fields are the ones touched at master-clock rate, and they are
+     * now packed into the first few cache lines. There is no byte-level
+     * serialisation of this structure -- savestates go through the
+     * VRAM/CGRAM/OAM/MMIO hash, not a raw dump -- so the layout is free to
+     * change. */
+    SCV11Scheduler scheduler;
+    uint16_t bg_scroll[8]; uint8_t bgofs_latch,bghofs_latch,oam_phase,cgram_phase;
+    uint64_t auto_joypad_end_master_clock;
+    uint32_t auto_joypad_poll_count;
+    uint32_t ppu_completed_frame;
+    uint16_t ppu_completed_line_count;
+    uint16_t joypad[4];
+    uint16_t auto_joypad_result[4];
+    uint8_t open_bus; uint32_t wram_port;
+
     SCMachine machine;
     const uint8_t *rom; size_t rom_size;
     uint8_t sram[SC_V11_SRAM_SIZE];
@@ -103,8 +127,6 @@ typedef struct SCV11Runtime {
     void *audio_sink_context;
     uint8_t sram_dirty;
     uint8_t rom_identity_valid;
-    uint8_t open_bus; uint32_t wram_port;
-    uint16_t bg_scroll[8]; uint8_t bgofs_latch,bghofs_latch,oam_phase,cgram_phase;
     uint64_t ppu_register_write_count[SC_V11_PPU_REGISTER_COUNT];
     uint64_t ppu_register_read_count[SC_V11_PPU_REGISTER_COUNT];
     uint64_t ppu_active_nonblank_write_count[SC_V11_PPU_REGISTER_COUNT];
@@ -122,20 +144,14 @@ typedef struct SCV11Runtime {
        instruction or DMA cannot overwrite the frame the host is presenting. */
     SCV11PpuLineState ppu_line_state[SC_V11_PPU_VISIBLE_LINES];
     SCV11PpuLineState ppu_completed_line_state[SC_V11_PPU_VISIBLE_LINES];
-    uint32_t ppu_completed_frame;
-    uint16_t ppu_completed_line_count;
     uint8_t mul_a,mul_b; uint16_t dividend; uint8_t divisor; uint16_t quotient,remainder;
-    uint16_t joypad[4];
-    uint16_t auto_joypad_result[4];
     /* Host display geometry used only by game-specific connector patches.
        It is not SNES state and is refreshed by the public core wrapper. */
     uint8_t host_widescreen_enabled;
-    uint64_t auto_joypad_end_master_clock;
-    uint32_t auto_joypad_poll_count;
     uint32_t cpu_apu_read_ordinal,current_instruction_address;
     uint64_t generated_callbacks,dma_event_count,dma_event_hash;
     uint32_t generated_unique_contexts; uint8_t route_failed; char route_error[192];
-    SCV11Scheduler scheduler; SCV11SmpCore smp_core;
+    SCV11SmpCore smp_core;
     SCAudioTransportState audio_transport;
     SCAudioRuntimeTrace audio_trace;
     SCAudioEpochTrace audio_epoch_trace;
