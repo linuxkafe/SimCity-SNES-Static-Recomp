@@ -36,6 +36,7 @@ set(SIMCITY_STATIC_RECOMP_SOURCES
     src/sc_v11_smp.c
     src/sc_audio_transport.c
     src/sc_v28_video.c
+    src/sc_recomp_native_ref.c
     src/sc_simulation_profiler.c
     generated/sc_v11_audio_epoch_manifest.c
     generated/sc_audio_scpu_access_manifest.c
