@@ -321,17 +321,28 @@ typedef struct {
     uint32_t char_base;
     unsigned mosaic_size;
     uint8_t mosaic_enable;
+    /* Per-tile cache for the city map entry. The map is 8x8 cells, so the
+       entry is constant for eight consecutive output pixels; resolving it
+       once per cell instead of once per pixel removes two WRAM reads and a
+       ROM read from seven of every eight pixels. Reset per line by
+       city_line_setup(). */
+    int cache_valid;
+    int cache_map_x;
+    int cache_map_y;
+    uint16_t cache_entry;
 } CityBgSetup;
 
 typedef struct {
     int world_x_base;   /* camera cell origin * 8 + sub-cell offset */
     int world_y_base;
+    uint8_t bgmode;     /* raw 0x2105: mode in bits 0-2, bit 3 used by bg_priority */
     CityBgSetup layer[2];
 } CityLineSetup;
 
 static void city_line_setup(const PpuLineView *view, unsigned mode,
                             CityLineSetup *out) {
     unsigned l;
+    out->bgmode = view_reg(view, 0x2105u);
     out->world_x_base =
         (int)(int16_t)read_wram16(SC_CITY_VIEW_X_OFFSET) * 8 +
         (int)(read_wram16(SC_CITY_FINE_X_OFFSET) & 7u);
@@ -349,16 +360,21 @@ static void city_line_setup(const PpuLineView *view, unsigned mode,
         b->mosaic_size = ((unsigned)view_reg(view, 0x2106u) >> 4) + 1u;
         b->mosaic_enable =
             (uint8_t)((view_reg(view, 0x2106u) & (1u << l)) != 0u);
+        b->cache_valid = 0;
+        b->cache_map_x = -1;
+        b->cache_map_y = -1;
+        b->cache_entry = 0u;
         b->valid = 1u;
     }
 }
 
 static int city_background_pixel(const PpuLineView *view,
-                                 const CityLineSetup *cs,
+                                 CityLineSetup *cs,
                                  unsigned layer,
                                  int city_source_x, int y,
                                  PpuPixel *pixel) {
-    unsigned mode = view_reg(view, 0x2105u) & 7u;
+    /* mode comes from the per-line setup, which already read 0x2105. */
+    unsigned mode = cs->bgmode & 7u;
     unsigned bpp = cs->layer[layer].bpp;
     uint32_t char_base;
     int map_x;
@@ -406,7 +422,19 @@ static int city_background_pixel(const PpuLineView *view,
     map_y = world_y >> 3;
     px = (unsigned)(world_x & 7);
     py = (unsigned)(world_y & 7);
-    entry = city_map_tile_entry(layer, map_x, map_y);
+    {
+        CityBgSetup *cb = &cs->layer[layer];
+        if (cb->cache_valid && cb->cache_map_x == map_x &&
+            cb->cache_map_y == map_y) {
+            entry = cb->cache_entry;
+        } else {
+            entry = city_map_tile_entry(layer, map_x, map_y);
+            cb->cache_valid = 1;
+            cb->cache_map_x = map_x;
+            cb->cache_map_y = map_y;
+            cb->cache_entry = entry;
+        }
+    }
     tile = (uint16_t)(entry & 0x03ffu);
     palette_group = (uint8_t)((entry >> 10) & 7u);
     if (entry & 0x4000u) px = 7u - px;
@@ -422,7 +450,7 @@ static int city_background_pixel(const PpuLineView *view,
 
     pixel->transparent = 0u;
     pixel->priority = bg_priority(mode, layer, (entry >> 13) & 1u,
-                                  (view_reg(view, 0x2105u) & 0x08u) != 0u);
+                                  (cs->bgmode & 0x08u) != 0u);
     pixel->layer = (uint8_t)layer;
     pixel->palette_index = color;
     if (bpp == 2u) {
@@ -456,6 +484,17 @@ typedef struct {
     unsigned map_height;
     unsigned world_width;
     unsigned world_height;
+    unsigned world_width_mask; /* world_width - 1, valid only when world_width_pow2 */
+    int world_width_pow2;      /* nonzero when world_width is a power of two */
+    /* Per-tile cache. The tilemap entry is a function of (tile_x, tile_y)
+       alone within a line, and the pixel loop walks 8 or 16 pixels of the
+       same tile before moving on. Resolving the entry once per tile instead
+       of once per pixel removes a VRAM read and its address arithmetic from
+       seven of every eight pixels. Reset per line by bg_line_setup(). */
+    int cache_valid;
+    int cache_tile_x;
+    int cache_tile_y;
+    uint16_t cache_entry;
     uint32_t map_base;
     uint32_t char_base;
     unsigned mosaic_size;
@@ -483,15 +522,30 @@ static void bg_line_setup(const PpuLineView *view, unsigned layer,
     setup->tile_shift = setup->tile_size == 16u ? 4u : 3u;
     setup->world_width = setup->map_width * setup->tile_size;
     setup->world_height = setup->map_height * setup->tile_size;
+    /* world_width is map_width (32 or 64) times tile_size (8 or 16), so it
+       is a power of two. The world_y wrap has always masked on that basis;
+       the world_x wrap now does too, but it is checked here rather than
+       assumed, and the modulo is kept as a fallback. */
+    setup->world_width_pow2 =
+        ((setup->world_width & (setup->world_width - 1u)) == 0u) ? 1 : 0;
+    setup->world_width_mask = setup->world_width - 1u;
+    setup->cache_valid = 0;
+    setup->cache_tile_x = -1;
+    setup->cache_tile_y = -1;
+    setup->cache_entry = 0u;
     setup->mosaic_size = ((unsigned)view_reg(view, 0x2106u) >> 4) + 1u;
     setup->mosaic_enable = (uint8_t)((view_reg(view, 0x2106u) & (1u << layer)) != 0u);
     setup->valid = 1u;
 }
 
-static int background_pixel(const PpuLineView *view, const BgLineSetup *bg,
+static int background_pixel(const PpuLineView *view, BgLineSetup *bg,
                             unsigned layer,
                             int x, unsigned y, PpuPixel *pixel) {
-    unsigned mode = view_reg(view, 0x2105u) & 7u;
+    /* mode, mosaic_size and mosaic_enable come from the per-line setup, which
+       already read 0x2105 and 0x2106. Re-reading them here cost two register
+       reads and a recomputation per pixel per layer, and the recomputed
+       mosaic_size simply overwrote the correct value initialised above. */
+    unsigned mode = bg->bgmode & 7u;
     unsigned bpp = bg->bpp;
     unsigned tile_size = bg->tile_size;
     unsigned tile_shift = bg->tile_shift;
@@ -516,27 +570,42 @@ static int background_pixel(const PpuLineView *view, const BgLineSetup *bg,
     pixel->transparent = 1u;
     if (layer >= 4u || bpp == 0u) return 1;
 
-    mosaic_size = ((unsigned)view_reg(view, 0x2106u) >> 4) + 1u;
-    if ((view_reg(view, 0x2106u) & (1u << layer)) && mosaic_size > 1u) {
+    if (bg->mosaic_enable && mosaic_size > 1u) {
         sample_x -= (int)wrap_coordinate(sample_x, mosaic_size);
         sample_y -= sample_y % mosaic_size;
     }
 
     map_base = bg->map_base;
     char_base = bg->char_base;
-    world_x = wrap_coordinate(sample_x + (int)view->scroll[layer * 2u],
-                              world_width);
+    if (bg->world_width_pow2) {
+        /* Same value as wrap_coordinate(), without the signed division: for a
+           power-of-two extent the two's-complement mask is the modulo. */
+        world_x = (unsigned)(sample_x + (int)view->scroll[layer * 2u]) &
+                  bg->world_width_mask;
+    } else {
+        world_x = wrap_coordinate(sample_x + (int)view->scroll[layer * 2u],
+                                  world_width);
+    }
     world_y = (sample_y + view->scroll[layer * 2u + 1u]) & (world_height - 1u);
     tile_x = world_x >> tile_shift;
     tile_y = world_y >> tile_shift;
     px = world_x & (tile_size - 1u);
     py = world_y & (tile_size - 1u);
 
-    screen_index = (tile_y >> 5) * bg->screen_tiles +
-                   (tile_x >> 5);
-    map_address = map_base + screen_index * 0x800u +
-                  (((tile_y & 31u) * 32u + (tile_x & 31u)) * 2u);
-    entry = read_vram16(map_address);
+    if (bg->cache_valid && bg->cache_tile_x == (int)tile_x &&
+        bg->cache_tile_y == (int)tile_y) {
+        entry = bg->cache_entry;
+    } else {
+        screen_index = (tile_y >> 5) * bg->screen_tiles +
+                       (tile_x >> 5);
+        map_address = map_base + screen_index * 0x800u +
+                      (((tile_y & 31u) * 32u + (tile_x & 31u)) * 2u);
+        entry = read_vram16(map_address);
+        bg->cache_valid = 1;
+        bg->cache_tile_x = (int)tile_x;
+        bg->cache_tile_y = (int)tile_y;
+        bg->cache_entry = entry;
+    }
     tile = (uint16_t)(entry & 0x03ffu);
     palette_group = (uint8_t)((entry >> 10) & 7u);
 
@@ -800,12 +869,12 @@ static int region_applies(unsigned setting, int inside_color_window) {
     return 1;
 }
 
-static PpuPixel screen_pixel(const PpuLineView *view, const BgLineSetup *bg,
+static PpuPixel screen_pixel(const PpuLineView *view, BgLineSetup *bg,
+                             unsigned mode,
                              unsigned screen_mask,
                              unsigned window_enable, int x, unsigned y,
                              uint8_t obj_palette, uint8_t obj_priority_value) {
     PpuPixel best;
-    unsigned mode = view_reg(view, 0x2105u) & 7u;
     unsigned layer;
     memset(&best, 0, sizeof(best));
     best.color = cgram_color(0u);
@@ -842,8 +911,9 @@ static PpuPixel screen_pixel(const PpuLineView *view, const BgLineSetup *bg,
 }
 
 static PpuPixel city_screen_pixel(const PpuLineView *view,
-                                  const BgLineSetup *bg,
-                                  const CityLineSetup *cs,
+                                  BgLineSetup *bg,
+                                  CityLineSetup *cs,
+                                  unsigned mode,
                                   unsigned screen_mask,
                                   unsigned window_enable,
                                   int source_x, int city_source_x,
@@ -851,7 +921,6 @@ static PpuPixel city_screen_pixel(const PpuLineView *view,
                                   uint8_t obj_palette,
                                   uint8_t obj_priority_value) {
     PpuPixel best;
-    unsigned mode = view_reg(view, 0x2105u) & 7u;
     unsigned layer;
     int effect_x = source_x < 0 || source_x >= (int)SC_V28_FRAME_WIDTH
         ? 128 : source_x;
@@ -1092,10 +1161,10 @@ static int render_lines_impl(const SCV11Runtime *runtime,
                 in_margin)
                 continue;
             PpuPixel main_pixel = expand_city_view
-                ? city_screen_pixel(&view, bg_setups, &city_setup, main_mask, main_windows,
+                ? city_screen_pixel(&view, bg_setups, &city_setup, mode, main_mask, main_windows,
                                     (int)x, city_source_x, city_source_y, y,
                                     object_palette[x], object_priority_value[x])
-                : screen_pixel(&view, bg_setups, main_mask, main_windows, source_x, y,
+                : screen_pixel(&view, bg_setups, mode, main_mask, main_windows, source_x, y,
                                object_palette[x], object_priority_value[x]);
             PpuPixel sub_pixel;
             uint16_t color = main_pixel.color;
@@ -1108,11 +1177,11 @@ static int render_lines_impl(const SCV11Runtime *runtime,
             if (clip_main) color = 0u;
             if (cgwsel & 0x02u) {
                 sub_pixel = expand_city_view
-                    ? city_screen_pixel(&view, bg_setups, &city_setup, sub_mask, sub_windows,
+                    ? city_screen_pixel(&view, bg_setups, &city_setup, mode, sub_mask, sub_windows,
                                         (int)x, city_source_x, city_source_y, y,
                                         object_palette[x],
                                         object_priority_value[x])
-                    : screen_pixel(&view, bg_setups, sub_mask, sub_windows, source_x, y,
+                    : screen_pixel(&view, bg_setups, mode, sub_mask, sub_windows, source_x, y,
                                    object_palette[x],
                                    object_priority_value[x]);
                 addend = sub_pixel.color;
