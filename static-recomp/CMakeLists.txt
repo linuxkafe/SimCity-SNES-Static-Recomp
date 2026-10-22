@@ -175,6 +175,27 @@ if(BUILD_TESTING)
         endif()
         add_test(NAME simcity-wram-write
             COMMAND simcity-wram-write "${SIMCITY_TEST_ROM}")
+
+        # Phase 2d byte-identity gate for the first register-allocated native
+        # block (0x059245).  Needs the real ROM to initialise the runtime.
+        add_executable(simcity-recomp-block-0x059245
+            tests/test_recomp_block_0x059245.c)
+        target_link_libraries(simcity-recomp-block-0x059245 PRIVATE
+            simcity-static-recomp)
+        target_include_directories(simcity-recomp-block-0x059245 PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/internal/include")
+        if(MSVC)
+            target_compile_definitions(simcity-recomp-block-0x059245 PRIVATE
+                _CRT_SECURE_NO_WARNINGS)
+            target_compile_options(simcity-recomp-block-0x059245 PRIVATE
+                /W4 /WX)
+        else()
+            target_compile_options(simcity-recomp-block-0x059245 PRIVATE
+                -Wall -Wextra -Wpedantic -Werror)
+        endif()
+        add_test(NAME simcity-recomp-block-0x059245
+            COMMAND simcity-recomp-block-0x059245 "${SIMCITY_TEST_ROM}")
     endif()
 
     find_package(Python3 COMPONENTS Interpreter QUIET)
