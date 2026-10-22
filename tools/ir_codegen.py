@@ -1,21 +1,5 @@
 #!/usr/bin/env python3
-"""ir_codegen.py — T066 Phase 2b: register-allocated native codegen.
-
-Consumes IR JSON from ir_extract.py and emits, for each basic block, a C
-function `sc_recomp_block_0xXXXXXX(SCV11Runtime *r)` in which the
-accumulator (and, where profitable, X/Y) lives in a local register for the
-whole block. The M/X flag widths are resolved at codegen time because REP/SEP
-immediates in the hot blocks are literals, so LDA/STA/STZ widths are known
-statically — this is the property that makes a real recompiler possible.
-
-Accounting calls (code_access, internal_cycle, bus read/write) are preserved
-verbatim (same PC, length, speed), so emulation stays bit-identical. Only the
-dispatch, the per-instruction bookkeeping stores and the SC_STATIC_CONTEXT_END
-round-trips are removed.
-
-Blocks containing an instruction outside the supported subset are emitted as
-fall-through stubs (return 0) so mixed-mode dispatch uses the interpreter.
-"""
+"""ir_codegen.py — T066 Phase 2b: register-allocated native codegen."""
 import argparse, json, os
 
 SUPPORTED = {"LDA","STA","STZ","REP","SEP","NOP","PHY","PLY","PHX","PLX",
@@ -30,27 +14,33 @@ TERM = {"BCC","BCS","BEQ","BMI","BNE","BPL","BRA","BRL","BVC","BVS","JMP",
 
 def gen_block(b):
     insns = b["insns"]
-    native = all(i["mnemonic"] in SUPPORTED for i in insns)
     lines = []
-    lines.append("/* Block 0x%06X..0x%06X (%d insns, term %s) %s */"
-                 % (b["start_pc"], b["end_pc"], b["ninsns"], b["terminator"],
-                    "NATIVE" if native else "STUB"))
+    lines.append("/* Block 0x%06X..0x%06X (%d insns, term %s) */"
+                 % (b["start_pc"], b["end_pc"], b["ninsns"], b["terminator"]))
     lines.append("int sc_recomp_block_0x%06X(SCV11Runtime *r) {" % b["start_pc"])
-    if not native:
-        lines.append("    /* unsupported opcode -> interpreter fallback */")
-        lines.append("    return 0;")
-        lines.append("}")
-        return "\n".join(lines) + "\n"
-
     lines.append("    SCCpuState *c = &r->machine.cpu;")
     lines.append("    uint8_t  *dp = r->machine.wram + c->d;  /* direct page, hoisted */")
-    lines.append("    uint16_t  a  = c->a;                    /* A in a register */")
-    lines.append("    uint8_t   mf = (uint8_t)((c->p & SC_FLAG_M) != 0u);  /* 8-bit A? */")
+    lines.append("    uint16_t  a  = c->a;                    /* accumulator in a register */")
+    lines.append("    uint8_t   mf = (uint8_t)((c->p & SC_FLAG_M) != 0u);")
+    lines.append("    (void)dp; (void)mf; (void)a;")
     lines.append("")
     for ins in insns:
         pc = ins["pc"]; L = ins["length"]; op = ins["opcode"]
         mn = ins["mnemonic"]; mode = ins["mode"]; operand = ins["operand"]
         lines.append("    /* 0x%06X %02X %-4s */" % (pc, op, mn))
+        if mn in TERM:
+            # terminator: sync A, emit verbatim body (accounting + pc update), return
+            lines.append("    c->a = a;")
+            lines.append(ins["body"])
+            lines.append("    return 1;  /* terminator consumed natively */")
+            # nothing follows a terminator inside a block
+            break
+        # straight-line op: register-based where supported, else verbatim fallback
+        if mn not in SUPPORTED:
+            lines.append("    c->a = a;")
+            lines.append(ins["body"])
+            lines.append("    a = c->a;")
+            continue
         lines.append("    sc_v11_scheduler_code_access(r, 0x%06Xu, %du);" % (pc, L))
         lines.append("    r->open_bus = 0x%02Xu;" % (operand & 0xFF))
         lines.append("    c->pc = 0x%04Xu;" % ((pc + L) & 0xFFFF))
@@ -72,8 +62,8 @@ def gen_block(b):
             elif mode == "DP":
                 lines.append("    a = dp[0x%02Xu] | ((uint16_t)dp[0x%02Xu] << 8);" % (operand & 0xFF, (operand+1)&0xFF))
             else:
-                lines.append("    /* TODO LDA %s */ c->a = a; return 0;" % mode)
-                lines.append("    return 0;")
+                lines.append("    /* TODO LDA %s */ c->a = a; return 0;" % mode); lines.append("    return 0;")
+                lines.append("}")
                 return "\n".join(lines) + "\n"
         elif mn == "STA":
             if mode == "ABS":
@@ -81,8 +71,8 @@ def gen_block(b):
             elif mode == "DP":
                 lines.append("    dp[0x%02Xu] = (uint8_t)(a); dp[0x%02Xu] = (uint8_t)(a >> 8);" % (operand & 0xFF, (operand+1)&0xFF))
             else:
-                lines.append("    /* TODO STA %s */ c->a = a; return 0;" % mode)
-                lines.append("    return 0;")
+                lines.append("    /* TODO STA %s */ c->a = a; return 0;" % mode); lines.append("    return 0;")
+                lines.append("}")
                 return "\n".join(lines) + "\n"
         elif mn == "STZ":
             if mode == "DP":
@@ -90,14 +80,15 @@ def gen_block(b):
             elif mode == "ABS":
                 lines.append("    sc_v11_bus_write16(r, sc_v11_ea_abs(r, 0x%04Xu), 0u);" % operand)
             else:
-                lines.append("    /* TODO STZ %s */ c->a = a; return 0;" % mode)
-                lines.append("    return 0;")
+                lines.append("    /* TODO STZ %s */ c->a = a; return 0;" % mode); lines.append("    return 0;")
+                lines.append("}")
                 return "\n".join(lines) + "\n"
         elif mn == "NOP":
             lines.append("    sc_v11_scheduler_internal_cycle(r, 1u);")
         else:
             lines.append("    /* TODO %s */ c->a = a; return 0;" % mn)
             lines.append("    return 0;")
+            lines.append("}")
             return "\n".join(lines) + "\n"
     lines.append("")
     lines.append("    c->a = a;   /* commit accumulator */")
@@ -122,7 +113,8 @@ def main():
         fh.write('#include "sc_core_internal.h"\n\n')
         for b in data["blocks"]:
             fh.write(gen_block(b) + "\n")
-            if all(i["mnemonic"] in SUPPORTED for i in b["insns"]):
+            if all(i["mnemonic"] in SUPPORTED or i["mnemonic"] in TERM for i in b["insns"]):
+                # native if all non-terminator insns supported (terminator handled verbatim)
                 n_native += 1
     with open(h_path, "w") as fh:
         fh.write("#ifndef SC_RECOMP_NATIVE_H\n#define SC_RECOMP_NATIVE_H\n")
