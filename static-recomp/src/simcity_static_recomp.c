@@ -1,6 +1,7 @@
 #include "simcity_static_recomp.h"
 
 #include "sc_v11_runtime.h"
+#include "sc_recomp_native.h"
 #include "sc_v28_video.h"
 #include "sc_v11_audio_epoch_manifest.h"
 #include "sc_audio_scpu_access_manifest.h"
@@ -101,6 +102,10 @@ int sc_core_logging_enabled(void) {
     return g_core_log != NULL;
 }
 
+volatile unsigned sc_core_render_skip = 0u;
+void sc_core_set_render_skip(unsigned flags) { sc_core_render_skip = flags; }
+unsigned sc_core_get_render_skip(void) { return sc_core_render_skip; }
+
 void simcity_recomp_log_close(void) {
     if (!g_core_log) return;
     core_logf(NULL, "log-close", "");
@@ -123,6 +128,15 @@ static void set_error(SimCityRecomp *instance, const char *message,
 static int static_cpu_step(SCV11Runtime *runtime) {
     if (runtime->scheduler.cpu_instructions < SC_V11_V02_GLOBAL_INSTRUCTIONS)
         return sc_v11_bootstrap_step(runtime);
+    if (runtime->machine.native_blocks_enabled) {
+        int nr = sc_recomp_native_step(runtime);
+        if (nr == SC_RECOMP_NATIVE_EXECUTED)
+            return 1;
+        if (nr == SC_RECOMP_NATIVE_ABORTED)
+            return sc_v11_cpu_step(runtime);
+        if (nr == SC_RECOMP_NATIVE_FAILED)
+            return 0;
+    }
     return sc_v11_cpu_step(runtime);
 }
 
@@ -546,7 +560,7 @@ static int render_current_frame(SimCityRecomp *instance, char *error,
        are unreliable in widescreen expand_city_view. Replaced with the
        full render below; region strip rendering is left for a future
        correct fast path. */
-    if (0 && instance->last_scroll_valid &&
+    if (instance->last_scroll_valid &&
         instance->last_render_hash_no_scroll == h_no_scroll) {
         int16_t dx = scroll_x - instance->last_scroll_x;
         int16_t dy = scroll_y - instance->last_scroll_y;
@@ -802,8 +816,18 @@ static int advance_internal(SimCityRecomp *instance,
                     "per-frame generated callback guard exceeded");
                 break;
             }
-            --guard;
-            if (!static_cpu_step(instance->runtime)) break;
+            if (instance->runtime->machine.native_blocks_enabled) {
+                uint64_t instr_before = instance->runtime->scheduler.cpu_instructions;
+                if (!static_cpu_step(instance->runtime)) break;
+                {
+                    uint64_t used = instance->runtime->scheduler.cpu_instructions -
+                                     instr_before;
+                    guard -= (used ? used : UINT64_C(1));
+                }
+            } else {
+                --guard;
+                if (!static_cpu_step(instance->runtime)) break;
+            }
             if (audio_progress && (guard & UINT64_C(255)) == 0u)
                 audio_progress(instance, progress_opaque);
             if (instance->runtime->scheduler.frame != guarded_frame) {
@@ -1170,6 +1194,24 @@ uint64_t simcity_recomp_master_clock(const SimCityRecomp *instance) {
         instance->runtime->scheduler.master_clock : 0u;
 }
 
+int simcity_recomp_set_native_blocks(SimCityRecomp *instance, int enabled) {
+    if (!instance || !instance->runtime) return 0;
+    instance->runtime->machine.native_blocks_enabled = (uint8_t)(enabled ? 1 : 0);
+    instance->runtime->machine.native_block_hits = 0u;
+    instance->runtime->machine.native_block_insns = 0u;
+    return 1;
+}
+
+uint32_t simcity_recomp_native_block_hits(const SimCityRecomp *instance) {
+    return (instance && instance->runtime) ?
+        instance->runtime->machine.native_block_hits : 0u;
+}
+
+uint64_t simcity_recomp_native_block_insns(const SimCityRecomp *instance) {
+    return (instance && instance->runtime) ?
+        instance->runtime->machine.native_block_insns : 0u;
+}
+
 int simcity_recomp_failed(const SimCityRecomp *instance) {
     return !instance || !instance->runtime ||
            instance->runtime->route_failed != 0u;
@@ -1194,6 +1236,41 @@ int simcity_recomp_read_oam(const SimCityRecomp *instance,
     if(length>SC_OAM_SIZE) return 0;
     memcpy(destination,instance->runtime->machine.oam,length);
     return 1;
+}
+
+int simcity_recomp_read_vram(const SimCityRecomp *instance,
+                             uint32_t offset,
+                             void *destination,
+                             size_t length) {
+    if(!instance || !instance->runtime || !destination) return 0;
+    if(offset>SC_VRAM_SIZE || length>SC_VRAM_SIZE-(size_t)offset) return 0;
+    memcpy(destination,instance->runtime->machine.vram+(size_t)offset,length);
+    return 1;
+}
+
+int simcity_recomp_read_cgram(const SimCityRecomp *instance,
+                              uint32_t offset,
+                              void *destination,
+                              size_t length) {
+    if(!instance || !instance->runtime || !destination) return 0;
+    if(offset>SC_CGRAM_SIZE || length>SC_CGRAM_SIZE-(size_t)offset) return 0;
+    memcpy(destination,instance->runtime->machine.cgram+(size_t)offset,length);
+    return 1;
+}
+
+int simcity_recomp_read_mmio(const SimCityRecomp *instance,
+                             uint32_t offset,
+                             void *destination,
+                             size_t length) {
+    if(!instance || !instance->runtime || !destination) return 0;
+    if(offset>SC_MMIO_SIZE || length>SC_MMIO_SIZE-(size_t)offset) return 0;
+    memcpy(destination,instance->runtime->machine.mmio+(size_t)offset,length);
+    return 1;
+}
+
+const void *simcity_recomp_machine(const SimCityRecomp *instance) {
+    if(!instance || !instance->runtime) return NULL;
+    return &instance->runtime->machine;
 }
 
 int simcity_recomp_write_wram(SimCityRecomp *instance,

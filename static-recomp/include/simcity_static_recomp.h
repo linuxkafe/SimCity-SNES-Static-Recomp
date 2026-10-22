@@ -183,6 +183,13 @@ int simcity_recomp_set_hud_shift_x(SimCityRecomp *instance, int pixels,
 uint32_t simcity_recomp_current_frame(const SimCityRecomp *instance);
 uint64_t simcity_recomp_instruction_count(const SimCityRecomp *instance);
 uint64_t simcity_recomp_master_clock(const SimCityRecomp *instance);
+
+/* T066: native (register-allocated) block dispatch.  Disabled by default;
+ * returns 1 on success.  native_block_hits/insns report how many blocks and
+ * instructions the native path actually executed. */
+int simcity_recomp_set_native_blocks(SimCityRecomp *instance, int enabled);
+uint32_t simcity_recomp_native_block_hits(const SimCityRecomp *instance);
+uint64_t simcity_recomp_native_block_insns(const SimCityRecomp *instance);
 int simcity_recomp_failed(const SimCityRecomp *instance);
 
 /* Bounds-checked read of the native 128 KiB SNES WRAM image. This never
@@ -200,6 +207,34 @@ int simcity_recomp_read_wram(const SimCityRecomp *instance,
 int simcity_recomp_read_oam(const SimCityRecomp *instance,
                             uint8_t *destination,
                             size_t length);
+
+/* Bounds-checked read of the 64 KiB VRAM image. Read-only: it never modifies
+   emulated state.  Exposed so host-side renderers (e.g. GPU tile renderer)
+   can read tile data and tilemap entries directly. */
+int simcity_recomp_read_vram(const SimCityRecomp *instance,
+                             uint32_t offset,
+                             void *destination,
+                             size_t length);
+
+/* Bounds-checked read of the 512-byte CGRAM (palette RAM) image.
+   Read-only: it never modifies emulated state. */
+int simcity_recomp_read_cgram(const SimCityRecomp *instance,
+                              uint32_t offset,
+                              void *destination,
+                              size_t length);
+
+/* Bounds-checked read of the 64-byte MMIO register latch array (offsets
+   relative to 0x2100).  Read-only: it never modifies emulated state. */
+int simcity_recomp_read_mmio(const SimCityRecomp *instance,
+                             uint32_t offset,     /* 0x0000–0x003F */
+                             void *destination,
+                             size_t length);
+
+/* Direct const pointer to the SCMachine so host-side native renderers can
+   read VRAM/CGRAM/OAM/MMIO/WRAM in a single cache-friendly pass.  Returns
+   NULL if the instance is not initialized.  The pointer is valid until the
+   next simcity_recomp_advance() call. */
+const void *simcity_recomp_machine(const SimCityRecomp *instance);
 
 /* Bounds-checked write to the native 128 KiB SNES WRAM image, for host-side
    cheats and mods applied between frames.

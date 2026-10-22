@@ -58,13 +58,27 @@ typedef struct PpuObjectTile {
     uint32_t data;
 } PpuObjectTile;
 
+#define SC_CITY_MAP_WIDTH 120
+#define SC_CITY_MAP_HEIGHT 100
+
 static const SCV11Runtime *g_runtime;
 static const uint8_t *g_vram;
 static const uint8_t *g_cgram;
 static const uint8_t *g_oam;
-
-#define SC_CITY_MAP_WIDTH 120
-#define SC_CITY_MAP_HEIGHT 100
+static unsigned g_render_skip = 0u;
+/* Per-frame tile-entry grid: city_map_tile_entry() result for every cell of
+   the 120x100 city map, for both BG layers.  Built once per frame so the
+   per-pixel path (city_background_pixel) is a cache lookup instead of a
+   WRAM read + ROM read + special-case branch. */
+static uint16_t g_city_tile_grid[2][SC_CITY_MAP_HEIGHT][SC_CITY_MAP_WIDTH];
+/* Per-scanline pre-rendered BG pixels (layers 0 and 1) for the expanded
+   city view.  Filled once per scanline before the x loop; the x loop and
+   city_screen_pixel read from it instead of calling city_background_pixel
+   per pixel. */
+static PpuPixel g_bg_prebuf[2][SC_V28_MAX_FRAME_WIDTH];
+/* Per-frame window mask: window_mask(view, layer, x) for each layer and x.
+   The window registers are per-frame, so this is computed once per frame. */
+static int g_window_mask[6][256];
 #define SC_CITY_MAP_WRAM_OFFSET 0x10200u
 #define SC_CITY_VIEW_X_OFFSET 0x01bdu
 #define SC_CITY_VIEW_Y_OFFSET 0x01bfu
@@ -104,28 +118,50 @@ static uint16_t read_rom16(uint32_t address) {
            ((uint16_t)g_runtime->rom[offset + 1u] << 8));
 }
 
+static uint16_t g_cgram_lut[256];
+
+static void cgram_lut_build(void) {
+    unsigned i;
+    for (i = 0u; i < 256u; ++i) {
+        size_t address = (size_t)i * 2u;
+        g_cgram_lut[i] = (uint16_t)(g_cgram[address] |
+               ((uint16_t)g_cgram[address + 1u] << 8)) & 0x7fffu;
+    }
+}
+
 static uint16_t cgram_color(unsigned index) {
-    size_t address = (size_t)(index & 255u) * 2u;
-    return (uint16_t)(g_cgram[address] |
-           ((uint16_t)g_cgram[address + 1u] << 8)) & 0x7fffu;
+    return g_cgram_lut[index & 255u];
+}
+
+static uint32_t g_bgra_lut[32768];
+
+static void bgra_lut_build(void) {
+    unsigned c;
+    for (c = 0u; c < 32768u; ++c) {
+        uint32_t blue = (c & 31u) * 255u / 31u;
+        uint32_t green = ((c >> 5) & 31u) * 255u / 31u;
+        uint32_t red = ((c >> 10) & 31u) * 255u / 31u;
+        g_bgra_lut[c] = 0xFF000000u | (blue) | (green << 8) | (red << 16);
+    }
 }
 
 static uint32_t bgra(uint16_t color) {
-    /* SNES CGRAM stores colors in BGR555 format:
-     * bits 0-4 = Blue, bits 5-9 = Green, bits 10-14 = Red */
-    uint32_t blue = (color & 31u) * 255u / 31u;
-    uint32_t green = ((color >> 5) & 31u) * 255u / 31u;
-    uint32_t red = ((color >> 10) & 31u) * 255u / 31u;
-    return 0xFF000000u | (blue) | (green << 8) | (red << 16);
+    return g_bgra_lut[color & 0x7fffu];
+}
+
+static uint8_t g_brightness_lut[16][32];
+
+static void brightness_lut_build(unsigned brightness) {
+    unsigned v;
+    for (v = 0u; v < 32u; ++v) {
+        g_brightness_lut[brightness][v] = (uint8_t)(v * brightness / 15u);
+    }
 }
 
 static uint16_t apply_brightness(uint16_t color, unsigned brightness) {
-    unsigned red = color & 31u;
-    unsigned green = (color >> 5) & 31u;
-    unsigned blue = (color >> 10) & 31u;
-    red = red * brightness / 15u;
-    green = green * brightness / 15u;
-    blue = blue * brightness / 15u;
+    unsigned red = g_brightness_lut[brightness][color & 31u];
+    unsigned green = g_brightness_lut[brightness][(color >> 5) & 31u];
+    unsigned blue = g_brightness_lut[brightness][(color >> 10) & 31u];
     return (uint16_t)(red | (green << 5) | (blue << 10));
 }
 
@@ -311,6 +347,21 @@ static uint16_t city_map_tile_entry(unsigned layer, int map_x, int map_y) {
                        SC_CITY_BG2_TABLE) + (uint32_t)code * 2u);
 }
 
+/* Build the per-frame tile-entry grid.  Called once per frame before the
+   scanline loop so city_background_pixel is a lookup instead of a WRAM+ROM
+   read on every cache miss. */
+static void city_tile_grid_build(void) {
+    unsigned layer, mx, my;
+    for (layer = 0u; layer < 2u; ++layer) {
+        for (my = 0u; my < SC_CITY_MAP_HEIGHT; ++my) {
+            for (mx = 0u; mx < SC_CITY_MAP_WIDTH; ++mx) {
+                g_city_tile_grid[layer][my][mx] =
+                    city_map_tile_entry(layer, (int)mx, (int)my);
+            }
+        }
+    }
+}
+
 /* Per-line constants for the widened city sampler. The four WRAM reads for
    the camera origin and the sub-cell offsets are identical for every pixel of
    a scanline, as are the per-layer constants, and city_background_pixel runs
@@ -377,7 +428,7 @@ static void city_line_setup(const PpuLineView *view, unsigned mode,
     }
 }
 
-static int city_background_pixel(const PpuLineView *view,
+static inline int city_background_pixel(const PpuLineView *view,
                                  CityLineSetup *cs,
                                  unsigned layer,
                                  int city_source_x, int y,
@@ -437,7 +488,12 @@ static int city_background_pixel(const PpuLineView *view,
             cb->cache_map_y == map_y) {
             entry = cb->cache_entry;
         } else {
-            entry = city_map_tile_entry(layer, map_x, map_y);
+            if (map_x < 0 || map_x >= SC_CITY_MAP_WIDTH ||
+                map_y < 0 || map_y >= SC_CITY_MAP_HEIGHT) {
+                entry = layer == 0u ? 0x0300u : 0x0301u;
+            } else {
+                entry = g_city_tile_grid[layer][map_y][map_x];
+            }
             cb->cache_valid = 1;
             cb->cache_map_x = map_x;
             cb->cache_map_y = map_y;
@@ -915,7 +971,7 @@ static int region_applies(unsigned setting, int inside_color_window) {
     return 1;
 }
 
-static PpuPixel screen_pixel(const PpuLineView *view, BgLineSetup *bg,
+static inline PpuPixel screen_pixel(const PpuLineView *view, BgLineSetup *bg,
                              unsigned mode,
                              unsigned screen_mask,
                              unsigned window_enable, int x, unsigned y,
@@ -956,7 +1012,7 @@ static PpuPixel screen_pixel(const PpuLineView *view, BgLineSetup *bg,
     return best;
 }
 
-static PpuPixel city_screen_pixel(const PpuLineView *view,
+static inline PpuPixel city_screen_pixel(const PpuLineView *view,
                                   BgLineSetup *bg,
                                   CityLineSetup *cs,
                                   unsigned mode,
@@ -980,19 +1036,24 @@ static PpuPixel city_screen_pixel(const PpuLineView *view,
     /* BG1/BG2 come from the full city map. BG3/BG4 remain native-width HUD. */
     for (layer = 0u; layer < 4u; ++layer) {
         PpuPixel candidate;
+        if (g_render_skip & SC_RENDER_SKIP_BG) break;
         if ((screen_mask & (1u << layer)) == 0u || bg_bpp(mode, layer) == 0u)
             continue;
         if (layer >= 2u &&
             (source_x < 0 || source_x >= (int)SC_V28_FRAME_WIDTH))
             continue;
         if ((window_enable & (1u << layer)) &&
-            window_mask(view, layer, effect_x))
+            g_window_mask[layer][effect_x & 0xff])
             continue;
         if (layer < 2u) {
-            if (!city_background_pixel(view, cs, layer, city_source_x,
-                                       city_source_y,
-                                       &candidate))
+            if (source_x >= 0 && source_x < (int)SC_V28_MAX_FRAME_WIDTH) {
+                candidate = g_bg_prebuf[layer][source_x];
+                if (candidate.transparent) continue;
+            } else if (!city_background_pixel(view, cs, layer, city_source_x,
+                                             city_source_y,
+                                             &candidate)) {
                 continue;
+            }
         } else if (!background_pixel(view, &bg[layer], layer, source_x, y,
                                     &candidate)) {
             continue;
@@ -1105,6 +1166,7 @@ static int render_lines_impl(const SCV11Runtime *runtime,
     g_vram = runtime->machine.vram;
     g_cgram = runtime->machine.cgram;
     g_oam = runtime->machine.oam;
+    g_render_skip = sc_core_render_skip;
     result.mode = (uint8_t)(current_reg(0x2105u) & 7u);
     result.brightness = runtime->machine.ppu_brightness;
     result.forced_blank = runtime->machine.ppu_forced_blank;
@@ -1122,6 +1184,28 @@ static int render_lines_impl(const SCV11Runtime *runtime,
         current_reg(0x2107u) == 0x58u &&
         current_reg(0x2108u) == 0x5cu;
 
+    /* Pre-compute the per-frame tile-entry grid so city_background_pixel
+       (called ~170k times per frame) is a cache lookup instead of a
+       WRAM+ROM read on every miss. */
+    city_tile_grid_build();
+
+    /* Pre-compute the CGRAM color LUT (CGRAM is static within a frame). */
+    cgram_lut_build();
+
+    /* Pre-compute the BGRA conversion LUT (constant, but rebuild is cheap). */
+    bgra_lut_build();
+
+    /* Pre-compute the brightness LUT (rebuilt per scanline if brightness changes). */
+
+    /* Pre-compute the window mask for all (layer, x) once per frame. */
+    {
+        PpuLineView wview = line_view(runtime, 0u);
+        unsigned wl, wx;
+        for (wl = 0u; wl < 6u; ++wl)
+            for (wx = 0u; wx < 256u; ++wx)
+                g_window_mask[wl][wx] = window_mask(&wview, wl, (int)wx);
+    }
+
     for (y = 0u; y < SC_V11_PPU_VISIBLE_LINES; ++y) {
         PpuLineView view = line_view(runtime, y);
         unsigned mode = view_reg(&view, 0x2105u) & 7u;
@@ -1133,6 +1217,7 @@ static int render_lines_impl(const SCV11Runtime *runtime,
         uint8_t cgwsel = view_reg(&view, 0x2130u);
         uint8_t cgadsub = view_reg(&view, 0x2131u);
         unsigned brightness = inidisp & 15u;
+        brightness_lut_build(brightness);
         int forced_blank = (inidisp & 0x80u) != 0u;
         int native_camera_x =
             (int)(int16_t)read_wram16(SC_CITY_VIEW_X_OFFSET) * 8 +
@@ -1190,10 +1275,176 @@ static int render_lines_impl(const SCV11Runtime *runtime,
                 bg_line_setup(&view, l, line_mode, &bg_setups[l]);
             city_line_setup(&view, line_mode, &city_setup);
         }
-        object_line(&view, y, output_width, object_left_margin,
-                    cursor_shift_x, cursor_shift_y, sprite_shift_x,
-                    expand_city_view ? hud_shift_x : 0,
-                    object_palette, object_priority_value);
+        if (expand_city_view) {
+            unsigned layer;
+            int world_y = city_setup.world_y_base + (int)y + 1;  /* sample_y = y+1 */
+            int map_y = world_y >> 3;
+            int py = world_y & 7;
+            for (layer = 0u; layer < 2u; ++layer) {
+                CityBgSetup *cb = &city_setup.layer[layer];
+                unsigned bpp = cb->bpp;
+                unsigned mode = city_setup.bgmode & 7u;
+                int mosaic_enable = cb->mosaic_enable && cb->mosaic_size > 1u;
+                uint32_t char_base = cb->char_base;
+                int min_map_x, max_map_x, mx;
+                if (bpp == 0u) continue;
+                if (mosaic_enable) {
+                    /* Mosaic changes per-pixel tile selection; fall back. */
+                    for (x = x_begin; x < x_end; ++x) {
+                        int csrc_x = display_left_x + (int)x - native_camera_x;
+                        int csrc_y = display_top_y + (int)y - native_camera_y;
+                        if (!city_background_pixel(&view, &city_setup, layer,
+                                                 csrc_x, csrc_y,
+                                                 &g_bg_prebuf[layer][x])) {
+                            memset(&g_bg_prebuf[layer][x], 0,
+                                   sizeof(g_bg_prebuf[layer][x]));
+                            g_bg_prebuf[layer][x].transparent = 1u;
+                            g_bg_prebuf[layer][x].layer = 5u;
+                        }
+                    }
+                    continue;
+                }
+                /* Visible map_x range (with 1-tile margin for partials). */
+                min_map_x = (city_setup.world_x_base + (int)x_begin -
+                             (int)native_camera_x + display_left_x) >> 3;
+                max_map_x = (city_setup.world_x_base + (int)x_end - 1 -
+                             (int)native_camera_x + display_left_x) >> 3;
+                if (min_map_x < 0) min_map_x = 0;
+                if (max_map_x >= SC_CITY_MAP_WIDTH) max_map_x = SC_CITY_MAP_WIDTH - 1;
+                for (mx = min_map_x - 1; mx <= max_map_x + 1; ++mx) {
+                    uint16_t entry;
+                    uint16_t tile;
+                    uint8_t palette_group;
+                    uint8_t flip_x, flip_y;
+                    uint32_t row_address;
+                    uint8_t td[4];
+                    unsigned plane;
+                    int eff_py;
+                    uint8_t priority;
+                    if (mx < 0 || mx >= SC_CITY_MAP_WIDTH ||
+                        map_y < 0 || map_y >= SC_CITY_MAP_HEIGHT) {
+                        entry = layer == 0u ? 0x0300u : 0x0301u;
+                    } else {
+                        entry = g_city_tile_grid[layer][map_y][mx];
+                    }
+                    tile = (uint16_t)(entry & 0x03ffu);
+                    palette_group = (uint8_t)((entry >> 10) & 7u);
+                    flip_x = (uint8_t)((entry >> 14) & 1u);
+                    flip_y = (uint8_t)((entry >> 15) & 1u);
+                    eff_py = flip_y ? (7 - py) : py;
+                    row_address = char_base + (uint32_t)tile * (bpp * 8u) +
+                                 (unsigned)eff_py * 2u;
+                    for (plane = 0u; plane < bpp; ++plane) {
+                        uint32_t addr = row_address + (plane >> 1) * 16u + (plane & 1u);
+                        td[plane] = g_vram[addr & 0xffffu];
+                    }
+                    /* Uniform tile: all plane bytes are 0x00 or 0xFF, so every
+                       pixel has the same color.  Compute once, fill 8 pixels. */
+                    {
+                        int uniform = 1;
+                        for (plane = 0u; plane < bpp; ++plane) {
+                            if (td[plane] != 0x00u && td[plane] != 0xFFu) {
+                                uniform = 0;
+                                break;
+                            }
+                        }
+                        if (uniform) {
+                            uint8_t ucolor = 0u;
+                            int px;
+                            for (plane = 0u; plane < bpp; ++plane) {
+                                if (td[plane] == 0xFFu)
+                                    ucolor |= (uint8_t)(1u << plane);
+                            }
+                            priority = bg_priority(mode, layer,
+                                                  (entry >> 13) & 1u,
+                                                  (city_setup.bgmode & 0x08u) != 0u);
+                            for (px = 0; px < 8; ++px) {
+                                int screen_x = mx * 8 + (flip_x ? (7 - px) : px) -
+                                               city_setup.world_x_base +
+                                               native_camera_x - display_left_x;
+                                if (screen_x < (int)x_begin || screen_x >= (int)x_end)
+                                    continue;
+                                {
+                                    PpuPixel *pp = &g_bg_prebuf[layer][screen_x];
+                                    memset(pp, 0, sizeof(*pp));
+                                    if (!ucolor) {
+                                        pp->transparent = 1u;
+                                        pp->layer = 5u;
+                                        continue;
+                                    }
+                                    pp->transparent = 0u;
+                                    pp->priority = priority;
+                                    pp->layer = (uint8_t)layer;
+                                    if (bpp == 2u) {
+                                        unsigned base = mode == 0u ? layer * 32u : 0u;
+                                        pp->palette_index = (uint8_t)(base + palette_group * 4u + ucolor);
+                                        pp->color = cgram_color(pp->palette_index);
+                                    } else if (bpp == 4u) {
+                                        pp->palette_index = (uint8_t)(palette_group * 16u + ucolor);
+                                        pp->color = cgram_color(pp->palette_index);
+                                    } else {
+                                        pp->palette_index = ucolor;
+                                        pp->color = (view_reg(&view, 0x2130u) & 1u)
+                                            ? direct_color(palette_group, ucolor)
+                                            : cgram_color(pp->palette_index);
+                                    }
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                    priority = bg_priority(mode, layer,
+                                          (entry >> 13) & 1u,
+                                          (city_setup.bgmode & 0x08u) != 0u);
+                    {
+                        int px;
+                        for (px = 0; px < 8; ++px) {
+                            int eff_px = flip_x ? (7 - px) : px;
+                            unsigned bit = 7u - (unsigned)eff_px;
+                            uint8_t color = 0u;
+                            for (plane = 0u; plane < bpp; ++plane) {
+                                color |= (uint8_t)(((td[plane] >> bit) & 1u) << plane);
+                            }
+                            int screen_x = mx * 8 + px - city_setup.world_x_base +
+                                           native_camera_x - display_left_x;
+                            if (screen_x < (int)x_begin || screen_x >= (int)x_end)
+                                continue;
+                            {
+                                PpuPixel *pp = &g_bg_prebuf[layer][screen_x];
+                                memset(pp, 0, sizeof(*pp));
+                                if (!color) {
+                                    pp->transparent = 1u;
+                                    pp->layer = 5u;
+                                    continue;
+                                }
+                                pp->transparent = 0u;
+                                pp->priority = priority;
+                                pp->layer = (uint8_t)layer;
+                                if (bpp == 2u) {
+                                    unsigned base = mode == 0u ? layer * 32u : 0u;
+                                    pp->palette_index = (uint8_t)(base + palette_group * 4u + color);
+                                    pp->color = cgram_color(pp->palette_index);
+                                } else if (bpp == 4u) {
+                                    pp->palette_index = (uint8_t)(palette_group * 16u + color);
+                                    pp->color = cgram_color(pp->palette_index);
+                                } else {
+                                    pp->palette_index = color;
+                                    pp->color = (view_reg(&view, 0x2130u) & 1u)
+                                        ? direct_color(palette_group, color)
+                                        : cgram_color(pp->palette_index);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (!(g_render_skip & SC_RENDER_SKIP_SPRITES)) {
+            object_line(&view, y, output_width, object_left_margin,
+                        cursor_shift_x, cursor_shift_y, sprite_shift_x,
+                        expand_city_view ? hud_shift_x : 0,
+                        object_palette, object_priority_value);
+        }
         for (x = x_begin; x < x_end; ++x) {
             int source_x = (int)x - (int)left_margin;
             int city_source_x = display_left_x + (int)x - native_camera_x;
@@ -1215,13 +1466,13 @@ static int render_lines_impl(const SCV11Runtime *runtime,
             PpuPixel sub_pixel;
             uint16_t color = main_pixel.color;
             uint16_t addend = view.fixed_color;
-            int color_window = window_mask(&view, 5u, effect_x);
+            int color_window = g_window_mask[5][effect_x & 0xff];
             int clip_main = region_applies((cgwsel >> 6) & 3u, color_window);
             int prevent_math = region_applies((cgwsel >> 4) & 3u, color_window);
             int math_enabled = (cgadsub & (1u << main_pixel.layer)) != 0u;
 
             if (clip_main) color = 0u;
-            if (cgwsel & 0x02u) {
+            if ((cgwsel & 0x02u) && !(g_render_skip & SC_RENDER_SKIP_SUBSCREEN)) {
                 sub_pixel = expand_city_view
                     ? city_screen_pixel(&view, bg_setups, &city_setup, mode, sub_mask, sub_windows,
                                         (int)x, city_source_x, city_source_y, y,
@@ -1245,7 +1496,8 @@ static int render_lines_impl(const SCV11Runtime *runtime,
             }
             color = apply_brightness(color, brightness);
             out555[(y + 7u) * output_width + x] = color;
-            out32[(y + 7u) * output_width + x] = bgra(color);
+            if (!(g_render_skip & SC_RENDER_SKIP_OUT32))
+                out32[(y + 7u) * output_width + x] = bgra(color);
         }
     }
 
