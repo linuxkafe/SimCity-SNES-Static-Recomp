@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""ir_stitch.py — T066 Phase 2a: stitch a shard's per-PC bodies into per-block C."""
+"""ir_stitch.py — T066 Phase 2a: stitch a shard's per-PC bodies into per-block C.
+
+Consumes the JSON produced by ir_extract.py (which carries each instruction's
+verbatim accounting+op body). Splits into basic blocks on mnemonic terminators
+(branches, jumps, calls, returns, COP/BRK, MVN/MVP) and emits one C function
+per block. Accounting calls are preserved verbatim, so emulation stays
+bit-identical; only the switch dispatch, the m/x guard, the bookkeeping stores
+and SC_STATIC_CONTEXT_END are removed.
+"""
 import argparse, json, os
 
 TERM = {"BCC","BCS","BEQ","BMI","BNE","BPL","BRA","BRL","BVC","BVS","JMP",
