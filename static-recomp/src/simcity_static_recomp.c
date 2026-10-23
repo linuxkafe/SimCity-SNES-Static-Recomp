@@ -635,6 +635,8 @@ static int render_current_frame(SimCityRecomp *instance, char *error,
 
     /* T071: compute which city tiles (BG1/BG2) changed since last frame. */
     compute_dirty_tiles(instance);
+    FILE *dbg = fopen("/tmp/debug.log", "a");
+    if (dbg) { fprintf(dbg, "frame=%u dirty=%u last_valid=%d render_enabled=%d skip_city=%d\\n", instance->runtime->scheduler.frame, g_dirty_tile_count, instance->last_render_valid, g_dirty_render_enabled, (g_dirty_tile_count == 0) && g_dirty_render_enabled && instance->last_render_valid); fclose(dbg); }
 
     /* When the tilemap is unchanged, skip city tile evaluation to save
        ~2.5s/frame.  The city BG from the previous framebuffer remains
@@ -646,6 +648,8 @@ static int render_current_frame(SimCityRecomp *instance, char *error,
 
     if (skip_city) {
         g_skip_city_tiles = 1;
+        FILE *dbg = fopen("/tmp/skip_city.log", "a");
+        if (dbg) { fprintf(dbg, "SKIP_CITY frame=%u\\n", instance->runtime->scheduler.frame); fclose(dbg); }
         /* full_frame=0: don't clear output buffers, keep previous city BG. */
         if (!sc_v28_render_first_visible_frame_columns(rt,
                                            width, margin,
