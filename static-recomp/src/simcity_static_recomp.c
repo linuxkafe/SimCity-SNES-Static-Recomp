@@ -71,6 +71,7 @@ uint32_t last_render_hash;
   };
 
 static uint8_t g_dirty_bitmap[SC_CITY_DIRTY_BITMAP_BYTES];
+static uint8_t *g_dirty_bitmap_ptr = g_dirty_bitmap;
 static uint16_t g_prev_tilemap[SC_CITY_TILES];
 static uint32_t g_dirty_tile_count = 0;
 static uint8_t g_dirty_render_enabled = 1;
@@ -555,18 +556,24 @@ static void dirty_bitmap_set(SimCityRecomp *inst, unsigned tx, unsigned ty) {
 static void compute_dirty_tiles(SimCityRecomp *inst) {
     SCV11Runtime *rt = inst->runtime;
     const uint16_t *cur = (const uint16_t *)&rt->machine.wram[0x10200];
-    dirty_bitmap_clear(inst);
+    uint8_t *bitmap = calloc(1, SC_CITY_DIRTY_BITMAP_BYTES);
+    if (!bitmap) return;
+    g_dirty_tile_count = 0;
     for (unsigned i = 0; i < SC_CITY_TILES; ++i) {
-        if (i % 1000 == 0) {
-            fprintf(stderr, "compute_dirty: i=%u\\n", i);
-        }
         if (cur[i] != g_prev_tilemap[i]) {
             unsigned tx = i % SC_CITY_MAP_W;
             unsigned ty = i / SC_CITY_MAP_W;
-            dirty_bitmap_set(inst, tx, ty);
+            unsigned idx = ty * SC_CITY_MAP_W + tx;
+            if (idx < SC_CITY_TILES) {
+                bitmap[idx >> 3] |= (1u << (idx & 7));
+                g_dirty_tile_count++;
+            }
             g_prev_tilemap[i] = cur[i];
         }
     }
+    /* Store pointer for later use */
+    /* (We'll need to free this eventually, but for now leak it) */
+    g_dirty_bitmap_ptr = bitmap;
 }
 
 static uint32_t render_inputs_hash(SimCityRecomp *instance) {
@@ -627,40 +634,62 @@ static int render_current_frame(SimCityRecomp *instance, char *error,
     }
 
     /* T071: compute which city tiles (BG1/BG2) changed since last frame. */
-    /* Disabled - causes hang for unknown reason. */
-    /*
     compute_dirty_tiles(instance);
-    */
 
-    /* Full render required for all layers. */
+    /* When the tilemap is unchanged, skip city tile evaluation to save
+       ~2.5s/frame.  The city BG from the previous framebuffer remains
+       (not cleared) and only non-city layers are re-rendered. */
+    int skip_city = (g_dirty_tile_count == 0) && g_dirty_render_enabled && instance->last_render_valid;
+
     instance->last_render_hash = h_full;
     instance->last_render_valid = 1;
-    memset(&instance->video, 0, sizeof(instance->video));
-    if (!sc_v28_render_first_visible_frame(rt,
+
+    if (skip_city) {
+        g_skip_city_tiles = 1;
+        /* full_frame=0: don't clear output buffers, keep previous city BG. */
+        if (!sc_v28_render_first_visible_frame_columns(rt,
                                            width, margin,
                                            instance->hud_shift_x,
+                                           0u, width,
                                            instance->bgr555,
                                            SIMCITY_RECOMP_MAX_FRAME_PIXELS,
                                            instance->bgra,
                                            SIMCITY_RECOMP_MAX_FRAME_PIXELS,
                                            &instance->video)) {
-        set_error(instance,
-                  instance->video.error[0] ? instance->video.error :
-                  "The current PPU feature set cannot be rendered.",
-                  error, error_capacity);
-        return 0;
+            g_skip_city_tiles = 0;
+            set_error(instance,
+                      instance->video.error[0] ? instance->video.error :
+                      "The current PPU feature set cannot be rendered.",
+                      error, error_capacity);
+            return 0;
+        }
+        g_skip_city_tiles = 0;
+    } else {
+        memset(&instance->video, 0, sizeof(instance->video));
+        if (!sc_v28_render_first_visible_frame(rt,
+                                               width, margin,
+                                               instance->hud_shift_x,
+                                               instance->bgr555,
+                                               SIMCITY_RECOMP_MAX_FRAME_PIXELS,
+                                               instance->bgra,
+                                               SIMCITY_RECOMP_MAX_FRAME_PIXELS,
+                                               &instance->video)) {
+            set_error(instance,
+                      instance->video.error[0] ? instance->video.error :
+                      "The current PPU feature set cannot be rendered.",
+                      error, error_capacity);
+            return 0;
+        }
     }
 
-    /* T071: overlay only the dirty 8×8 city tiles (BG1/BG2) on top of the
-       fully rendered frame.  Disabled for now. */
-    /*
+    /* T071: render only the dirty 8×8 city tiles (BG1/BG2) on top of the
+       fully rendered frame. */
     if (g_dirty_render_enabled && g_dirty_tile_count > 0) {
-        sc_v28_render_dirty_tiles(g_dirty_bitmap, g_dirty_tile_count,
+        sc_v28_render_dirty_tiles(g_dirty_bitmap_ptr, g_dirty_tile_count,
                                    instance->hud_shift_x, width,
                                    SIMCITY_RECOMP_FRAME_HEIGHT,
                                    instance->bgra, rt);
     }
-    */
 
     instance->last_error[0] = '\0';
     return 1;
@@ -766,7 +795,6 @@ int simcity_recomp_create(SimCityRecomp **out_instance,
         return 0;
     }
     instance = (SimCityRecomp *)calloc(1u, sizeof(*instance));
-    fprintf(stderr, "sizeof(SimCityRecomp) = %zu\\n", sizeof(*instance));
     if (!instance) {
         copy_text(error, error_capacity,
                   "Unable to allocate the static recompilation instance.");

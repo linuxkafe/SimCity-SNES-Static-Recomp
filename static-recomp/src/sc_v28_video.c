@@ -66,6 +66,7 @@ static const uint8_t *g_vram;
 static const uint8_t *g_cgram;
 static const uint8_t *g_oam;
 static unsigned g_render_skip = 0u;
+unsigned g_skip_city_tiles = 0u;
 /* Per-frame tile-entry grid: city_map_tile_entry() result for every cell of
    the 120x100 city map, for both BG layers.  Built once per frame so the
    per-pixel path (city_background_pixel) is a cache lookup instead of a
@@ -1037,6 +1038,7 @@ static inline PpuPixel city_screen_pixel(const PpuLineView *view,
     for (layer = 0u; layer < 4u; ++layer) {
         PpuPixel candidate;
         if (g_render_skip & SC_RENDER_SKIP_BG) break;
+        if (layer < 2u && g_skip_city_tiles) continue;
         if ((screen_mask & (1u << layer)) == 0u || bg_bpp(mode, layer) == 0u)
             continue;
         if (layer >= 2u &&
@@ -1187,7 +1189,7 @@ static int render_lines_impl(const SCV11Runtime *runtime,
     /* Pre-compute the per-frame tile-entry grid so city_background_pixel
        (called ~170k times per frame) is a cache lookup instead of a
        WRAM+ROM read on every miss. */
-    if (!(g_render_skip & SC_RENDER_SKIP_BG)) {
+    if (!g_skip_city_tiles) {
         city_tile_grid_build();
     }
 
@@ -1290,7 +1292,7 @@ static int render_lines_impl(const SCV11Runtime *runtime,
                 uint32_t char_base = cb->char_base;
                 int min_map_x, max_map_x, mx;
                 if (bpp == 0u) continue;
-                if (g_render_skip & SC_RENDER_SKIP_BG) continue;
+                if (g_skip_city_tiles) continue;
                 if (mosaic_enable) {
                     /* Mosaic changes per-pixel tile selection; fall back. */
                     for (x = x_begin; x < x_end; ++x) {
@@ -1571,6 +1573,8 @@ void sc_v28_render_dirty_tiles(const uint8_t *dirty_bitmap, uint32_t dirty_tile_
     if (dirty_tile_count == 0) return;
 
     PpuLineView view = line_view(rt, 0);
+    CityLineSetup city_setup;
+    city_line_setup(&view, view_reg(&view, 0x2105u) & 7u, &city_setup);
 
     for (unsigned ty = 0; ty < 100; ++ty) {
         for (unsigned tx = 0; tx < 120; ++tx) {
@@ -1588,8 +1592,8 @@ void sc_v28_render_dirty_tiles(const uint8_t *dirty_bitmap, uint32_t dirty_tile_
                     if (sx < 0 || sx >= (int)width) continue;
 
                     PpuPixel pix = {0};
-                    if (city_background_pixel(&view, NULL, 0, sx, sy, &pix) ||
-                        city_background_pixel(&view, NULL, 1, sx, sy, &pix)) {
+                    if (city_background_pixel(&view, &city_setup, 0, sx, sy, &pix) ||
+                        city_background_pixel(&view, &city_setup, 1, sx, sy, &pix)) {
                         uint32_t color = g_bgra_lut[pix.color & 0x7fffu];
                         bgra[sy * width + sx] = color;
                     }
