@@ -21,6 +21,14 @@
 #define SC_CITY_TILES (SC_CITY_MAP_W * SC_CITY_MAP_H)
 #define SC_CITY_DIRTY_BITMAP_BYTES ((SC_CITY_TILES + 7) / 8)
 
+volatile unsigned sc_core_render_cache_enabled = 1u;
+void sc_core_set_render_cache_enabled(unsigned enabled) {
+    sc_core_render_cache_enabled = enabled ? 1u : 0u;
+}
+unsigned sc_core_get_render_cache_enabled(void) {
+    return sc_core_render_cache_enabled;
+}
+
 struct SimCityRecomp {
      uint8_t *rom;
      SCV11Runtime *runtime;
@@ -1219,6 +1227,22 @@ uint32_t simcity_recomp_native_block_hits(const SimCityRecomp *instance) {
 uint64_t simcity_recomp_native_block_insns(const SimCityRecomp *instance) {
     return (instance && instance->runtime) ?
         instance->runtime->machine.native_block_insns : 0u;
+}
+
+/* T071: dirty-tile render path control and statistics. */
+void simcity_recomp_set_dirty_render(SimCityRecomp *instance, int enabled) {
+    if (instance) instance->dirty_render_enabled = enabled ? 1 : 0;
+}
+
+int simcity_recomp_get_dirty_render(const SimCityRecomp *instance) {
+    return instance ? instance->dirty_render_enabled : 0;
+}
+
+void simcity_recomp_dirty_stats(const SimCityRecomp *instance,
+                                uint32_t *dirty_tiles,
+                                uint32_t *total_tiles) {
+    if (dirty_tiles) *dirty_tiles = instance ? instance->dirty_tile_count : 0;
+    if (total_tiles) *total_tiles = SC_CITY_TILES;
 }
 
 int simcity_recomp_failed(const SimCityRecomp *instance) {
