@@ -600,7 +600,25 @@ static int render_current_frame(SimCityRecomp *instance, char *error,
     SCV11Runtime *rt = instance->runtime;
     SCMachine *m = &rt->machine;
 
-    uint32_t h_full = render_inputs_hash(instance);
+    uint32_t h_full = 2166136261u;
+    uint32_t h_no_scroll = 2166136261u;
+    h_full = snapshot_hash_bytes(h_full, m->vram, sizeof(m->vram));
+    h_full = snapshot_hash_bytes(h_full, m->cgram, sizeof(m->cgram));
+    h_full = snapshot_hash_bytes(h_full, m->oam, sizeof(m->oam));
+    h_no_scroll = snapshot_hash_bytes(h_no_scroll, m->vram, sizeof(m->vram));
+    h_no_scroll = snapshot_hash_bytes(h_no_scroll, m->cgram, sizeof(m->cgram));
+    h_no_scroll = snapshot_hash_bytes(h_no_scroll, m->oam, sizeof(m->oam));
+    for (int i = 0x100; i < 0x200; ++i) {
+        h_full = snapshot_hash_bytes(h_full, &m->mmio[i], 1);
+        if (i < 0x210D || i > 0x2114) {
+            h_no_scroll = snapshot_hash_bytes(h_no_scroll, &m->mmio[i], 1);
+        }
+    }
+    h_full = snapshot_hash_bytes(h_full, &m->ppu_brightness, 1);
+    h_full = snapshot_hash_bytes(h_full, &m->ppu_forced_blank, 1);
+    h_no_scroll = snapshot_hash_bytes(h_no_scroll, &m->ppu_brightness, 1);
+    h_no_scroll = snapshot_hash_bytes(h_no_scroll, &m->ppu_forced_blank, 1);
+    instance->last_render_hash_no_scroll = h_no_scroll;
 
     /* Fast path: identical renderer inputs -> the previous framebuffer is the
        output by construction. */
