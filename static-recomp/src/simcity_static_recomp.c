@@ -604,7 +604,7 @@ static int render_current_frame(SimCityRecomp *instance, char *error,
     /* T071: compute which city tiles (BG1/BG2) changed since last frame. */
     compute_dirty_tiles(instance);
 
-    /* Full render required. */
+    /* Full render required for all layers. */
     instance->last_render_hash = h_full;
     instance->last_render_valid = 1;
     memset(&instance->video, 0, sizeof(instance->video));
@@ -624,7 +624,9 @@ static int render_current_frame(SimCityRecomp *instance, char *error,
     }
 
     /* T071: overlay only the dirty 8×8 city tiles (BG1/BG2) on top of the
-       fully rendered frame. */
+       fully rendered frame.  This is a no-op for correctness (the full render
+       already produced the correct output) but serves as the hook for future
+       optimization where the full render skips city layers. */
     if (instance->dirty_render_enabled) {
         sc_v28_render_dirty_tiles(instance->dirty_bitmap, instance->dirty_tile_count,
                                    instance->hud_shift_x, width,
