@@ -1187,7 +1187,9 @@ static int render_lines_impl(const SCV11Runtime *runtime,
     /* Pre-compute the per-frame tile-entry grid so city_background_pixel
        (called ~170k times per frame) is a cache lookup instead of a
        WRAM+ROM read on every miss. */
-    city_tile_grid_build();
+    if (!(g_render_skip & SC_RENDER_SKIP_BG)) {
+        city_tile_grid_build();
+    }
 
     /* Pre-compute the CGRAM color LUT (CGRAM is static within a frame). */
     cgram_lut_build();
@@ -1288,6 +1290,7 @@ static int render_lines_impl(const SCV11Runtime *runtime,
                 uint32_t char_base = cb->char_base;
                 int min_map_x, max_map_x, mx;
                 if (bpp == 0u) continue;
+                if (g_render_skip & SC_RENDER_SKIP_BG) continue;
                 if (mosaic_enable) {
                     /* Mosaic changes per-pixel tile selection; fall back. */
                     for (x = x_begin; x < x_end; ++x) {

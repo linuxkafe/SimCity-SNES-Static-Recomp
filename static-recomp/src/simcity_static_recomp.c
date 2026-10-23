@@ -1,5 +1,6 @@
 #include "simcity_static_recomp.h"
 
+#include "sc_core_internal.h"
 #include "sc_v11_runtime.h"
 #include "sc_recomp_native.h"
 #include "sc_v28_video.h"
@@ -67,11 +68,12 @@ uint32_t last_render_hash;
       uint32_t render_cache_hits;
       uint32_t render_cache_misses;
       /* T071 dirty-tile cache */
-      uint16_t prev_tilemap[SC_CITY_TILES];
-      uint8_t  dirty_bitmap[SC_CITY_DIRTY_BITMAP_BYTES];
-      uint32_t dirty_tile_count;
-      uint8_t  dirty_render_enabled;
   };
+
+static uint8_t g_dirty_bitmap[SC_CITY_DIRTY_BITMAP_BYTES];
+static uint16_t g_prev_tilemap[SC_CITY_TILES];
+static uint32_t g_dirty_tile_count = 0;
+static uint8_t g_dirty_render_enabled = 1;
 
 static void copy_text(char *destination, size_t capacity, const char *source);
 
@@ -538,14 +540,16 @@ static void shift_framebuffer(uint32_t *buf, unsigned width, unsigned height,
 }
 
 static void dirty_bitmap_clear(SimCityRecomp *inst) {
-    memset(inst->dirty_bitmap, 0, SC_CITY_DIRTY_BITMAP_BYTES);
-    inst->dirty_tile_count = 0;
+    memset(g_dirty_bitmap, 0, SC_CITY_DIRTY_BITMAP_BYTES);
+    g_dirty_tile_count = 0;
+    (void)inst;
 }
 
 static void dirty_bitmap_set(SimCityRecomp *inst, unsigned tx, unsigned ty) {
     unsigned idx = ty * SC_CITY_MAP_W + tx;
-    inst->dirty_bitmap[idx >> 3] |= (1u << (idx & 7));
-    inst->dirty_tile_count++;
+    g_dirty_bitmap[idx >> 3] |= (1u << (idx & 7));
+    g_dirty_tile_count++;
+    (void)inst;
 }
 
 static void compute_dirty_tiles(SimCityRecomp *inst) {
@@ -553,11 +557,14 @@ static void compute_dirty_tiles(SimCityRecomp *inst) {
     const uint16_t *cur = (const uint16_t *)&rt->machine.wram[0x10200];
     dirty_bitmap_clear(inst);
     for (unsigned i = 0; i < SC_CITY_TILES; ++i) {
-        if (cur[i] != inst->prev_tilemap[i]) {
+        if (i % 1000 == 0) {
+            fprintf(stderr, "compute_dirty: i=%u\\n", i);
+        }
+        if (cur[i] != g_prev_tilemap[i]) {
             unsigned tx = i % SC_CITY_MAP_W;
             unsigned ty = i / SC_CITY_MAP_W;
             dirty_bitmap_set(inst, tx, ty);
-            inst->prev_tilemap[i] = cur[i];
+            g_prev_tilemap[i] = cur[i];
         }
     }
 }
@@ -597,12 +604,15 @@ static int render_current_frame(SimCityRecomp *instance, char *error,
 
     /* Fast path: identical renderer inputs -> the previous framebuffer is the
        output by construction. */
-    if (instance->last_render_valid && instance->last_render_hash == h_full) {
+    if (0 && instance->last_render_valid && instance->last_render_hash == h_full) {
         return 1;
     }
 
     /* T071: compute which city tiles (BG1/BG2) changed since last frame. */
+    /* Disabled - causes hang for unknown reason. */
+    /*
     compute_dirty_tiles(instance);
+    */
 
     /* Full render required for all layers. */
     instance->last_render_hash = h_full;
@@ -624,15 +634,15 @@ static int render_current_frame(SimCityRecomp *instance, char *error,
     }
 
     /* T071: overlay only the dirty 8×8 city tiles (BG1/BG2) on top of the
-       fully rendered frame.  This is a no-op for correctness (the full render
-       already produced the correct output) but serves as the hook for future
-       optimization where the full render skips city layers. */
-    if (instance->dirty_render_enabled) {
-        sc_v28_render_dirty_tiles(instance->dirty_bitmap, instance->dirty_tile_count,
+       fully rendered frame.  Disabled for now. */
+    /*
+    if (g_dirty_render_enabled && g_dirty_tile_count > 0) {
+        sc_v28_render_dirty_tiles(g_dirty_bitmap, g_dirty_tile_count,
                                    instance->hud_shift_x, width,
                                    SIMCITY_RECOMP_FRAME_HEIGHT,
                                    instance->bgra, rt);
     }
+    */
 
     instance->last_error[0] = '\0';
     return 1;
@@ -682,7 +692,7 @@ static int cold_reset(SimCityRecomp *instance, char *error,
         instance->runtime->sram_dirty = preserved_sram_dirty;
     }
     instance->initialized = 1u;
-    instance->dirty_render_enabled = 1u;   /* T071: dirty-tile render ON by default */
+    g_dirty_render_enabled = 1u;   /* T071: dirty-tile render ON by default */
     sc_v11_set_audio_sink(instance->runtime, audio_sink, instance);
     if (instance->runtime->route_failed) {
         set_error(instance,
@@ -738,6 +748,7 @@ int simcity_recomp_create(SimCityRecomp **out_instance,
         return 0;
     }
     instance = (SimCityRecomp *)calloc(1u, sizeof(*instance));
+    fprintf(stderr, "sizeof(SimCityRecomp) = %zu\\n", sizeof(*instance));
     if (!instance) {
         copy_text(error, error_capacity,
                   "Unable to allocate the static recompilation instance.");
@@ -1233,17 +1244,17 @@ uint64_t simcity_recomp_native_block_insns(const SimCityRecomp *instance) {
 
 /* T071: dirty-tile render path control and statistics. */
 void simcity_recomp_set_dirty_render(SimCityRecomp *instance, int enabled) {
-    if (instance) instance->dirty_render_enabled = enabled ? 1 : 0;
+    if (instance) g_dirty_render_enabled = enabled ? 1 : 0;
 }
 
 int simcity_recomp_get_dirty_render(const SimCityRecomp *instance) {
-    return instance ? instance->dirty_render_enabled : 0;
+    return instance ? g_dirty_render_enabled : 0;
 }
 
 void simcity_recomp_dirty_stats(const SimCityRecomp *instance,
                                 uint32_t *dirty_tiles,
                                 uint32_t *total_tiles) {
-    if (dirty_tiles) *dirty_tiles = instance ? instance->dirty_tile_count : 0;
+    if (dirty_tiles) *dirty_tiles = instance ? g_dirty_tile_count : 0;
     if (total_tiles) *total_tiles = SC_CITY_TILES;
 }
 
