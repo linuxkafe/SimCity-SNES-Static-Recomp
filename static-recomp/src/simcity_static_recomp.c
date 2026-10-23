@@ -16,6 +16,11 @@
 #define SIMCITY_FRAME_INSTRUCTION_GUARD UINT64_C(50000)
 #define SIMCITY_HOST_PCM_CAPACITY_FRAMES 65536u
 
+#define SC_CITY_MAP_W 120
+#define SC_CITY_MAP_H 100
+#define SC_CITY_TILES (SC_CITY_MAP_W * SC_CITY_MAP_H)
+#define SC_CITY_DIRTY_BITMAP_BYTES ((SC_CITY_TILES + 7) / 8)
+
 struct SimCityRecomp {
      uint8_t *rom;
      SCV11Runtime *runtime;
@@ -50,6 +55,14 @@ uint32_t last_render_hash;
       int16_t last_scroll_x;
       int16_t last_scroll_y;
       uint8_t last_scroll_valid;
+      /* T070 render cache diagnostics */
+      uint32_t render_cache_hits;
+      uint32_t render_cache_misses;
+      /* T071 dirty-tile cache */
+      uint16_t prev_tilemap[SC_CITY_TILES];
+      uint8_t  dirty_bitmap[SC_CITY_DIRTY_BITMAP_BYTES];
+      uint32_t dirty_tile_count;
+      uint8_t  dirty_render_enabled;
   };
 
 static void copy_text(char *destination, size_t capacity, const char *source);
@@ -516,6 +529,54 @@ static void shift_framebuffer(uint32_t *buf, unsigned width, unsigned height,
     }
 }
 
+static void dirty_bitmap_clear(SimCityRecomp *inst) {
+    memset(inst->dirty_bitmap, 0, SC_CITY_DIRTY_BITMAP_BYTES);
+    inst->dirty_tile_count = 0;
+}
+
+static void dirty_bitmap_set(SimCityRecomp *inst, unsigned tx, unsigned ty) {
+    unsigned idx = ty * SC_CITY_MAP_W + tx;
+    inst->dirty_bitmap[idx >> 3] |= (1u << (idx & 7));
+    inst->dirty_tile_count++;
+}
+
+static void compute_dirty_tiles(SimCityRecomp *inst) {
+    SCV11Runtime *rt = inst->runtime;
+    const uint16_t *cur = (const uint16_t *)&rt->machine.wram[0x10200];
+    dirty_bitmap_clear(inst);
+    for (unsigned i = 0; i < SC_CITY_TILES; ++i) {
+        if (cur[i] != inst->prev_tilemap[i]) {
+            unsigned tx = i % SC_CITY_MAP_W;
+            unsigned ty = i / SC_CITY_MAP_W;
+            dirty_bitmap_set(inst, tx, ty);
+            inst->prev_tilemap[i] = cur[i];
+        }
+    }
+}
+
+static uint32_t render_inputs_hash(SimCityRecomp *instance) {
+    SCV11Runtime *rt = instance->runtime;
+    SCMachine *m = &rt->machine;
+    uint32_t h = 2166136261u;
+
+    h = snapshot_hash_bytes(h, &instance->widescreen, 1u);
+    h = snapshot_hash_bytes(h, &instance->hud_shift_x, sizeof(instance->hud_shift_x));
+    h = snapshot_hash_bytes(h, m->vram, sizeof(m->vram));
+    h = snapshot_hash_bytes(h, m->cgram, sizeof(m->cgram));
+    h = snapshot_hash_bytes(h, m->oam, sizeof(m->oam));
+    h = snapshot_hash_bytes(h, m->mmio, SC_V11_PPU_RENDER_REGISTER_COUNT);
+    h = snapshot_hash_bytes(h, rt->bg_scroll, sizeof(rt->bg_scroll));
+    h = snapshot_hash_bytes(h, &m->ppu_brightness, 1u);
+    h = snapshot_hash_bytes(h, &m->ppu_forced_blank, 1u);
+    h = snapshot_hash_bytes(h, &m->ppu_fixed_color, sizeof(m->ppu_fixed_color));
+    h = snapshot_hash_bytes(h, &m->wram[0x10200u], 120u * 100u * 2u);
+    h = snapshot_hash_bytes(h, &m->wram[0x0137u], 6u);
+    h = snapshot_hash_bytes(h, &m->wram[0x0201u], 4u);
+    h = snapshot_hash_bytes(h, &m->wram[0x025Du], 6u);
+
+    return h;
+}
+
 static int render_current_frame(SimCityRecomp *instance, char *error,
                                 size_t error_capacity) {
     unsigned width = instance->widescreen ? SIMCITY_RECOMP_WIDESCREEN_WIDTH :
@@ -524,67 +585,19 @@ static int render_current_frame(SimCityRecomp *instance, char *error,
     SCV11Runtime *rt = instance->runtime;
     SCMachine *m = &rt->machine;
 
-    uint32_t h_full = 2166136261u;
-    uint32_t h_no_scroll = 2166136261u;
-    h_full = snapshot_hash_bytes(h_full, m->vram, sizeof(m->vram));
-    h_full = snapshot_hash_bytes(h_full, m->cgram, sizeof(m->cgram));
-    h_full = snapshot_hash_bytes(h_full, m->oam, sizeof(m->oam));
-    h_no_scroll = snapshot_hash_bytes(h_no_scroll, m->vram, sizeof(m->vram));
-    h_no_scroll = snapshot_hash_bytes(h_no_scroll, m->cgram, sizeof(m->cgram));
-    h_no_scroll = snapshot_hash_bytes(h_no_scroll, m->oam, sizeof(m->oam));
-    for (int i = 0x100; i < 0x200; ++i) {
-        h_full = snapshot_hash_bytes(h_full, &m->mmio[i], 1);
-        /* scroll registers 0x210D-0x2114 (BG1-4 HOFS/VOFS) are excluded
-           from the no‑scroll hash so that pure camera movement can be
-           detected cheaply. */
-        if (i < 0x210D || i > 0x2114) {
-            h_no_scroll = snapshot_hash_bytes(h_no_scroll, &m->mmio[i], 1);
-        }
-    }
-    h_full = snapshot_hash_bytes(h_full, &m->ppu_brightness, 1);
-    h_full = snapshot_hash_bytes(h_full, &m->ppu_forced_blank, 1);
-    h_no_scroll = snapshot_hash_bytes(h_no_scroll, &m->ppu_brightness, 1);
-    h_no_scroll = snapshot_hash_bytes(h_no_scroll, &m->ppu_forced_blank, 1);
+    uint32_t h_full = render_inputs_hash(instance);
 
-    /* Fast path: completely identical state -> nothing to do. */
+    /* Fast path: identical renderer inputs -> the previous framebuffer is the
+       output by construction. */
     if (instance->last_render_valid && instance->last_render_hash == h_full) {
         return 1;
     }
 
-    /* Extract current BG1 scroll (used as proxy for camera). */
-    int16_t scroll_x = (int16_t)m->mmio[0x210D];
-    int16_t scroll_y = (int16_t)m->mmio[0x210E];
-
-    /* Scroll-only fast path disabled: the old shift-based path produced
-       incorrect image accumulation (smear) and the sign/camera tracking
-       are unreliable in widescreen expand_city_view. Replaced with the
-       full render below; region strip rendering is left for a future
-       correct fast path. */
-    if (instance->last_scroll_valid &&
-        instance->last_render_hash_no_scroll == h_no_scroll) {
-        int16_t dx = scroll_x - instance->last_scroll_x;
-        int16_t dy = scroll_y - instance->last_scroll_y;
-        if (dx != 0 || dy != 0) {
-            shift_framebuffer(instance->bgra, width,
-                              SIMCITY_RECOMP_FRAME_HEIGHT, dx, dy);
-        }
-        instance->last_scroll_x = scroll_x;
-        instance->last_scroll_y = scroll_y;
-        instance->last_render_hash = h_full;
-        instance->last_render_hash_no_scroll = h_no_scroll;
-        instance->last_render_valid = 1;
-        return 1;
-    }
+    /* T071: compute which city tiles (BG1/BG2) changed since last frame. */
+    compute_dirty_tiles(instance);
 
     /* Full render required. */
-    /* TODO(load‑opt): PC group 0x09000 accounts for ~89 % of cycles during city load.
-       Investigate generated code in that 1 KiB window (VRAM write / tile‑map init)
-       and consider batching VRAM updates or adding a dirty‑tile render path. */
     instance->last_render_hash = h_full;
-    instance->last_render_hash_no_scroll = h_no_scroll;
-    instance->last_scroll_x = scroll_x;
-    instance->last_scroll_y = scroll_y;
-    instance->last_scroll_valid = 1;
     instance->last_render_valid = 1;
     memset(&instance->video, 0, sizeof(instance->video));
     if (!sc_v28_render_first_visible_frame(rt,
@@ -601,6 +614,16 @@ static int render_current_frame(SimCityRecomp *instance, char *error,
                   error, error_capacity);
         return 0;
     }
+
+    /* T071: overlay only the dirty 8×8 city tiles (BG1/BG2) on top of the
+       fully rendered frame. */
+    if (instance->dirty_render_enabled) {
+        sc_v28_render_dirty_tiles(instance->dirty_bitmap, instance->dirty_tile_count,
+                                   instance->hud_shift_x, width,
+                                   SIMCITY_RECOMP_FRAME_HEIGHT,
+                                   instance->bgra, rt);
+    }
+
     instance->last_error[0] = '\0';
     return 1;
 }
@@ -867,31 +890,16 @@ static int advance_internal(SimCityRecomp *instance,
     sc_v11_vram_write_flush(instance->runtime);
 
     if (render_frame) {
-        memset(&instance->video, 0, sizeof(instance->video));
-        {
-            unsigned width = instance->widescreen ?
-                SIMCITY_RECOMP_WIDESCREEN_WIDTH : SIMCITY_RECOMP_FRAME_WIDTH;
-            unsigned margin = instance->widescreen ?
-                SIMCITY_RECOMP_WIDESCREEN_MARGIN : 0u;
-        if (sc_v28_render_first_visible_frame(instance->runtime,
-                                              width, margin,
-                                              instance->hud_shift_x,
-                                              instance->bgr555,
-                                              SIMCITY_RECOMP_MAX_FRAME_PIXELS,
-                                              instance->bgra,
-                                              SIMCITY_RECOMP_MAX_FRAME_PIXELS,
-                                              &instance->video)) {
+        /* Use render_current_frame so the frame-hash cache is on the hot path. */
+        if (render_current_frame(instance, local.renderer_error,
+                                 sizeof(local.renderer_error))) {
             local.frame_rendered = 1u;
             instance->last_error[0] = '\0';
         } else {
-            copy_text(local.renderer_error, sizeof(local.renderer_error),
-                      instance->video.error[0] ? instance->video.error :
-                      "The current PPU feature set cannot be rendered.");
             copy_text(instance->last_error, sizeof(instance->last_error),
                       local.renderer_error);
             core_logf(instance, "renderer-warning", "input=%04X error=%s",
                       input_mask, local.renderer_error);
-        }
         }
     } else {
         instance->last_error[0] = '\0';

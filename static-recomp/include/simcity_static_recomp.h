@@ -192,6 +192,18 @@ uint32_t simcity_recomp_native_block_hits(const SimCityRecomp *instance);
 uint64_t simcity_recomp_native_block_insns(const SimCityRecomp *instance);
 int simcity_recomp_failed(const SimCityRecomp *instance);
 
+/* T070: render cache control. */
+extern volatile unsigned sc_core_render_cache_enabled;
+void sc_core_set_render_cache_enabled(unsigned enabled);
+unsigned sc_core_get_render_cache_enabled(void);
+
+/* T071: dirty-tile render path control and statistics. */
+void simcity_recomp_set_dirty_render(SimCityRecomp *instance, int enabled);
+int  simcity_recomp_get_dirty_render(const SimCityRecomp *instance);
+void simcity_recomp_dirty_stats(const SimCityRecomp *instance,
+                                uint32_t *dirty_tiles,
+                                uint32_t *total_tiles);
+
 /* Bounds-checked read of the native 128 KiB SNES WRAM image. This never
    modifies emulated state. */
 int simcity_recomp_read_wram(const SimCityRecomp *instance,

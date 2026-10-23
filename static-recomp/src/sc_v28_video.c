@@ -1559,3 +1559,39 @@ int sc_v28_render_first_visible_frame_columns(const SCV11Runtime *runtime,
                              bgr555, bgr555_capacity, bgra, bgra_capacity,
                              report, 0);
 }
+
+/* T071: render only dirty city tiles (BG1/BG2) into the BGRA framebuffer.
+   Called after a full-frame render to overlay changed tiles. */
+void sc_v28_render_dirty_tiles(const uint8_t *dirty_bitmap, uint32_t dirty_tile_count,
+                               int hud_shift_x, unsigned width, unsigned height,
+                               uint32_t *bgra, const SCV11Runtime *rt) {
+    if (dirty_tile_count == 0) return;
+
+    PpuLineView view = line_view(rt, 0);
+
+    for (unsigned ty = 0; ty < 100; ++ty) {
+        for (unsigned tx = 0; tx < 120; ++tx) {
+            unsigned idx = ty * 120 + tx;
+            if (!(dirty_bitmap[idx >> 3] & (1u << (idx & 7)))) continue;
+
+            int base_x = (int)tx * 8 - hud_shift_x;
+            int base_y = (int)ty * 8;
+
+            for (int py = 0; py < 8; ++py) {
+                int sy = base_y + py;
+                if (sy < 0 || sy >= (int)height) continue;
+                for (int px = 0; px < 8; ++px) {
+                    int sx = base_x + px;
+                    if (sx < 0 || sx >= (int)width) continue;
+
+                    PpuPixel pix = {0};
+                    if (city_background_pixel(&view, NULL, 0, sx, sy, &pix) ||
+                        city_background_pixel(&view, NULL, 1, sx, sy, &pix)) {
+                        uint32_t color = g_bgra_lut[pix.color & 0x7fffu];
+                        bgra[sy * width + sx] = color;
+                    }
+                }
+            }
+        }
+    }
+}
