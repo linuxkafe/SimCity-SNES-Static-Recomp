@@ -646,6 +646,8 @@ static int render_current_frame(SimCityRecomp *instance, char *error,
 
     if (skip_city) {
         g_skip_city_tiles = 1;
+        FILE *dbg = fopen("sdmc:/skip_city.log", "a");
+        if (dbg) { fprintf(dbg, "SKIP_CITY frame=%u\\n", instance->runtime->scheduler.frame); fclose(dbg); }
         /* full_frame=0: don't clear output buffers, keep previous city BG. */
         if (!sc_v28_render_first_visible_frame_columns(rt,
                                            width, margin,
