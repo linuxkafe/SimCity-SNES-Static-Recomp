@@ -58,4 +58,9 @@ int sc_v28_render_first_visible_frame_columns(const SCV11Runtime *runtime,
                                               size_t bgra_capacity,
                                               SCV28VideoReport *report);
 
+/* T071: dirty-tile render function (implemented in sc_v28_video.c) */
+void sc_v28_render_dirty_tiles(const uint8_t *dirty_bitmap, uint32_t dirty_tile_count,
+                               int hud_shift_x, unsigned width, unsigned height,
+                               uint32_t *bgra, const SCV11Runtime *rt);
+
 #endif

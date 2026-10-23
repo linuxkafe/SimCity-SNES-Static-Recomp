@@ -672,6 +672,7 @@ static int cold_reset(SimCityRecomp *instance, char *error,
         instance->runtime->sram_dirty = preserved_sram_dirty;
     }
     instance->initialized = 1u;
+    instance->dirty_render_enabled = 1u;   /* T071: dirty-tile render ON by default */
     sc_v11_set_audio_sink(instance->runtime, audio_sink, instance);
     if (instance->runtime->route_failed) {
         set_error(instance,
